@@ -1,17 +1,16 @@
 [package]
 name = "oxideav-core"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
-description = "Core types for oxideav: timestamps, packets, frames, media formats"
-
+version = "0.0.3"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Mark Karpeles"]
+description = "Core types for oxideav — timestamps, packets, frames, media formats (pure Rust, no C deps)"
+repository = "https://github.com/OxideAV/oxideav-core"
+homepage = "https://github.com/OxideAV/oxideav-core"
 readme = "README.md"
-homepage.workspace = true
 keywords = ["multimedia", "audio", "video", "codec", "pure-rust"]
 categories = ["multimedia", "encoding"]
 
 [dependencies]
-thiserror = { workspace = true }
+thiserror = "1"
