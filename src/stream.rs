@@ -249,7 +249,14 @@ impl CodecResolver for NullCodecResolver {
 }
 
 /// Codec-level parameters shared between demuxer/muxer and en/decoder.
+///
+/// **Marked `#[non_exhaustive]`** — construction via struct-literal
+/// syntax is not supported. Use the [`audio`](Self::audio) /
+/// [`video`](Self::video) constructors (or functional-update
+/// `CodecParameters { ..base }` syntax) so new fields can be added
+/// without another semver break.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CodecParameters {
     pub codec_id: CodecId,
     pub media_type: MediaType,
