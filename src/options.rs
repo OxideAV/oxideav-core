@@ -287,7 +287,7 @@ fn coerce(name: &str, kind: OptionKind, raw: &str) -> Result<OptionValue> {
             .map_err(|_| Error::invalid(format!("option '{name}' expects f32, got {raw:?}"))),
         OptionKind::String => Ok(OptionValue::String(raw.to_owned())),
         OptionKind::Enum(allowed) => {
-            if allowed.iter().any(|a| *a == raw) {
+            if allowed.contains(&raw) {
                 Ok(OptionValue::String(raw.to_owned()))
             } else {
                 Err(Error::invalid(format!(
