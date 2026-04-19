@@ -151,6 +151,15 @@ pub enum PixelFormat {
     Yuyv422,
     /// Packed 4:2:2, byte order U0 Y0 V0 Y1.
     Uyvy422,
+
+    // --- Print / prepress ---
+    /// Packed 8-bit CMYK, 4 bytes/pixel in byte order C, M, Y, K.
+    /// "Regular" convention: C=0 means no cyan ink (white), C=255 means
+    /// full cyan. Used by JPEG 4-component scans from non-Adobe encoders
+    /// and by many print-side image toolchains. Adobe Photoshop's
+    /// inverted CMYK (where 0 = full ink) is a separate variant reserved
+    /// for a future `CmykInverted`.
+    Cmyk,
 }
 
 impl PixelFormat {
@@ -228,6 +237,7 @@ impl PixelFormat {
             Self::Rgb48Le => 48,
             Self::Rgba64Le => 64,
             Self::Yuyv422 | Self::Uyvy422 => 16,
+            Self::Cmyk => 32,
             // Planar YUV: 4:2:0 ≈ 12, 4:2:2 ≈ 16, 4:4:4 ≈ 24
             // 10/12-bit variants double the byte count but we report the
             // packed-bits-per-pixel estimate for a uniform heuristic.
