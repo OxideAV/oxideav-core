@@ -4,6 +4,7 @@
 //! containers, filters, and frontends build on top of the primitives defined
 //! here.
 
+pub mod bits;
 pub mod capabilities;
 pub mod error;
 pub mod execution;
