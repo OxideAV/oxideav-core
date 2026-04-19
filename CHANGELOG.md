@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/OxideAV/oxideav-core/compare/v0.1.2...v0.1.3) - 2026-04-20
+
+### Added
+
+- `options` module: `CodecOptions` (string key/value bag) + `OptionKind`,
+  `OptionValue`, `OptionField`, `CodecOptionsStruct` trait, and a
+  generic `parse_options::<T>()` that coerces the bag into a typed
+  per-codec options struct using the struct's declared `SCHEMA`.
+  Codec factories parse `CodecParameters::options` at init, so there's
+  no per-packet overhead; strict validation rejects unknown keys and
+  malformed values up front.
+- `json-options` feature (off by default): adds a `serde_json`
+  dependency and exposes `CodecOptions::from_json` /
+  `from_json_value` / `parse_options_json`. Lets consumers such as
+  `oxideav-pipeline` feed codec tuning in as JSON.
+- `CodecParameters::options` field (`CodecOptions`) carrying codec
+  tuning knobs. `matches_core` ignores it — tuning doesn't affect
+  stream compatibility.
+
+### Changed (breaking)
+
+- `CodecParameters` is now `#[non_exhaustive]`. External crates that
+  constructed it via `CodecParameters { ... }` struct-literal syntax
+  must switch to the `::audio(id)` / `::video(id)` constructors (or
+  functional-update `{ ..base }` syntax). The trade-off is that adding
+  new fields from here on is no longer a semver break. Shipped under a
+  patch version intentionally — downstream oxideav-* siblings pin
+  `"0.1"` and widening them all to `"0.2"` in lockstep was not
+  practical.
+
 ## [0.1.2](https://github.com/OxideAV/oxideav-core/compare/v0.1.1...v0.1.2) - 2026-04-19
 
 ### Other
