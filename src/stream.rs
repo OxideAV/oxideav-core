@@ -113,18 +113,126 @@ impl std::fmt::Display for CodecTag {
     }
 }
 
+/// Context passed to a codec's probe function during tag resolution.
+///
+/// Built by the demuxer from whatever it has already parsed (stream
+/// format block, a peek at the first packet, numeric hints like
+/// `bits_per_sample`). Probes read fields directly; the struct is
+/// `#[non_exhaustive]` so additional hints can be added later without
+/// breaking codec crates that match on it.
+///
+/// The canonical construction pattern, for a demuxer:
+///
+/// ```
+/// # use oxideav_core::{CodecTag, ProbeContext};
+/// let tag = CodecTag::wave_format(0x0001);
+/// let ctx = ProbeContext::new(&tag)
+///     .bits(24)
+///     .channels(2)
+///     .sample_rate(48_000);
+/// # let _ = ctx;
+/// ```
+///
+/// Codec authors read fields like `ctx.bits_per_sample` / `ctx.tag`
+/// directly — `#[non_exhaustive]` forbids struct-literal construction
+/// from outside this crate but does not restrict field access.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct ProbeContext<'a> {
+    /// The tag being resolved — always set.
+    pub tag: &'a CodecTag,
+    /// Raw container-level stream-format blob if available
+    /// (e.g. WAVEFORMATEX, BITMAPINFOHEADER, MP4 sample-entry bytes,
+    /// Matroska `CodecPrivate`). Format is container-specific.
+    pub header: Option<&'a [u8]>,
+    /// First packet bytes if the demuxer has already read one.
+    /// Most demuxers resolve tags at stream-discovery time before any
+    /// packet exists; this is `None` in that case.
+    pub packet: Option<&'a [u8]>,
+    /// Audio: bits per sample (from WAVEFORMATEX, MP4 sample entry,
+    /// Matroska `BitDepth`, etc.).
+    pub bits_per_sample: Option<u16>,
+    pub channels: Option<u16>,
+    pub sample_rate: Option<u32>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+impl<'a> ProbeContext<'a> {
+    /// Start building a context for `tag` with every hint field empty.
+    pub fn new(tag: &'a CodecTag) -> Self {
+        Self {
+            tag,
+            header: None,
+            packet: None,
+            bits_per_sample: None,
+            channels: None,
+            sample_rate: None,
+            width: None,
+            height: None,
+        }
+    }
+
+    pub fn header(mut self, h: &'a [u8]) -> Self {
+        self.header = Some(h);
+        self
+    }
+
+    pub fn packet(mut self, p: &'a [u8]) -> Self {
+        self.packet = Some(p);
+        self
+    }
+
+    pub fn bits(mut self, n: u16) -> Self {
+        self.bits_per_sample = Some(n);
+        self
+    }
+
+    pub fn channels(mut self, n: u16) -> Self {
+        self.channels = Some(n);
+        self
+    }
+
+    pub fn sample_rate(mut self, n: u32) -> Self {
+        self.sample_rate = Some(n);
+        self
+    }
+
+    pub fn width(mut self, n: u32) -> Self {
+        self.width = Some(n);
+        self
+    }
+
+    pub fn height(mut self, n: u32) -> Self {
+        self.height = Some(n);
+        self
+    }
+}
+
+/// Confidence value returned by a probe. `1.0` means "certainly me",
+/// `0.0` means "not me", values in between mean "partial evidence — if
+/// no higher-confidence claim exists, this should win". The registry
+/// picks the claim with the highest returned confidence and skips any
+/// that return `0.0`.
+pub type Confidence = f32;
+
+/// A probe function a codec attaches to its registration to
+/// disambiguate tag collisions. Called once per candidate
+/// registration during `resolve_tag`.
+pub type ProbeFn = fn(&ProbeContext) -> Confidence;
+
 /// Resolve a [`CodecTag`] (FourCC / WAVEFORMATEX / Matroska id / …) to a
 /// [`CodecId`]. The [`oxideav-codec`](https://crates.io/crates/oxideav-codec)
 /// registry implements this, but defining the trait here lets
 /// containers consume tag resolution via `&dyn CodecResolver` without
 /// pulling in the codec crate as a direct dependency.
-///
-/// `probe_data` — when `Some` — should carry enough of the first
-/// packet's bytes for any registered probe function to look at. Pass
-/// `None` if the demuxer hasn't read a packet yet; the registry falls
-/// back to priority-only resolution.
 pub trait CodecResolver: Sync {
-    fn resolve_tag(&self, tag: &CodecTag, probe_data: Option<&[u8]>) -> Option<CodecId>;
+    /// Resolve the tag in `ctx.tag` to a codec id. Implementations walk
+    /// every registration whose tag set contains the tag, call each
+    /// probe (treating `None` as "always 1.0"), and return the id with
+    /// the highest resulting confidence. Ties are broken by
+    /// registration order.
+    fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId>;
 }
 
 /// Null resolver that resolves nothing — useful as a default when a
@@ -134,7 +242,7 @@ pub trait CodecResolver: Sync {
 pub struct NullCodecResolver;
 
 impl CodecResolver for NullCodecResolver {
-    fn resolve_tag(&self, _tag: &CodecTag, _probe_data: Option<&[u8]>) -> Option<CodecId> {
+    fn resolve_tag(&self, _ctx: &ProbeContext) -> Option<CodecId> {
         None
     }
 }
@@ -277,12 +385,25 @@ mod codec_tag_tests {
     #[test]
     fn null_resolver_resolves_nothing() {
         let r = NullCodecResolver;
-        assert!(r.resolve_tag(&CodecTag::fourcc(b"XVID"), None).is_none());
-        assert!(r
-            .resolve_tag(&CodecTag::fourcc(b"XVID"), Some(b"anything"))
-            .is_none());
-        assert!(r
-            .resolve_tag(&CodecTag::wave_format(0x0055), None)
-            .is_none());
+        let xvid = CodecTag::fourcc(b"XVID");
+        assert!(r.resolve_tag(&ProbeContext::new(&xvid)).is_none());
+        let wf = CodecTag::wave_format(0x0055);
+        assert!(r.resolve_tag(&ProbeContext::new(&wf)).is_none());
+    }
+
+    #[test]
+    fn probe_context_builder_fills_hints() {
+        let tag = CodecTag::wave_format(0x0001);
+        let ctx = ProbeContext::new(&tag)
+            .bits(24)
+            .channels(2)
+            .sample_rate(48_000)
+            .header(&[1, 2, 3])
+            .packet(&[4, 5]);
+        assert_eq!(ctx.bits_per_sample, Some(24));
+        assert_eq!(ctx.channels, Some(2));
+        assert_eq!(ctx.sample_rate, Some(48_000));
+        assert_eq!(ctx.header.unwrap(), &[1, 2, 3]);
+        assert_eq!(ctx.packet.unwrap(), &[4, 5]);
     }
 }

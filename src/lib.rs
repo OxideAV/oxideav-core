@@ -26,7 +26,8 @@ pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
 pub use stream::{
-    CodecId, CodecParameters, CodecResolver, CodecTag, NullCodecResolver, StreamInfo,
+    CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,
+    ProbeFn, StreamInfo,
 };
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
 pub use time::{TimeBase, Timestamp};
