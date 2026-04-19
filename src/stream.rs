@@ -281,6 +281,8 @@ mod codec_tag_tests {
         assert!(r
             .resolve_tag(&CodecTag::fourcc(b"XVID"), Some(b"anything"))
             .is_none());
-        assert!(r.resolve_tag(&CodecTag::wave_format(0x0055), None).is_none());
+        assert!(r
+            .resolve_tag(&CodecTag::wave_format(0x0055), None)
+            .is_none());
     }
 }
