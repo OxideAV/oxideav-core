@@ -36,6 +36,12 @@ use crate::{Error, Result};
 // ==================== MSB-first ====================
 
 /// MSB-first bit reader over a borrowed byte slice.
+///
+/// Copy+Clone: the reader owns no heap state, only a borrowed slice
+/// and a handful of counters, so `let saved = br;` followed by a
+/// later `br = saved;` is a valid checkpoint/restore — some codec
+/// parsers (e.g. MPEG-4 Part 2's VOP resync) use exactly that pattern.
+#[derive(Clone, Copy)]
 pub struct BitReader<'a> {
     data: &'a [u8],
     /// Index of the next byte to load into the accumulator.
@@ -320,8 +326,20 @@ impl BitWriter {
         }
     }
 
+    /// Alias of [`Self::align_to_byte`] — MPEG-4 video spells it
+    /// `align_to_byte_zero` since the spec also defines alternate
+    /// align-with-ones tails in other contexts.
+    pub fn align_to_byte_zero(&mut self) {
+        self.align_to_byte()
+    }
+
     /// Borrow the bytes accumulated so far (excluding any unflushed partial byte).
     pub fn bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Alias of [`Self::bytes`] — some codec crates spell this `buffer`.
+    pub fn buffer(&self) -> &[u8] {
         &self.data
     }
 
@@ -351,6 +369,9 @@ impl Default for BitWriter {
 // ==================== LSB-first (Vorbis) ====================
 
 /// LSB-first bit reader. See [module docs](self) for the LSB convention.
+///
+/// Copy+Clone for the same reason as [`BitReader`] — no heap state.
+#[derive(Clone, Copy)]
 pub struct BitReaderLsb<'a> {
     data: &'a [u8],
     byte_pos: usize,
