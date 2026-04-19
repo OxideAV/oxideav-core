@@ -25,6 +25,6 @@ pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
 pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
-pub use stream::{CodecId, CodecParameters, StreamInfo};
+pub use stream::{CodecId, CodecParameters, CodecTag, StreamInfo};
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
 pub use time::{TimeBase, Timestamp};

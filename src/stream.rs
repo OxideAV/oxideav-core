@@ -31,6 +31,88 @@ impl std::fmt::Display for CodecId {
     }
 }
 
+/// A codec identifier scoped to a container format — the thing a
+/// demuxer reads out of the file to name a codec. Resolved to a
+/// [`CodecId`] by the codec registry.
+///
+/// Centralising these in the registry (instead of each container
+/// hand-rolling its own FourCC → CodecId table) lets:
+///
+/// * a codec crate declare its own tag claims in `register()`, keeping
+///   ownership co-located with the decoder;
+/// * multiple codecs claim the same tag with priority ordering;
+/// * optional per-claim probes disambiguate the tag-collision cases
+///   that happen everywhere in the wild (DIV3 that's actually MPEG-4
+///   Part 2, XVID that's actually MS-MPEG4v3, audio wFormatTag=0x0055
+///   that could be MP3 or — very rarely — something else, etc.).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CodecTag {
+    /// Four-character code used by AVI's `bmih.biCompression`, MP4 /
+    /// QuickTime sample-entry type, Matroska V_/A_ tags built around
+    /// FourCC, and many others. Always stored with alphabetic bytes
+    /// upper-cased so lookups are case-insensitive; non-alphabetic
+    /// bytes are preserved as-is.
+    Fourcc([u8; 4]),
+
+    /// AVI / WAV `WAVEFORMATEX::wFormatTag` (e.g. 0x0001 = PCM,
+    /// 0x0055 = MP3, 0x00FF = "raw" AAC, 0x1610 = AAC ADTS).
+    WaveFormat(u16),
+
+    /// MP4 ObjectTypeIndication (ISO/IEC 14496-1 Table 5 / the values
+    /// in an MP4 `esds` `DecoderConfigDescriptor`). e.g. 0x40 = MPEG-4
+    /// AAC, 0x20 = MPEG-4 Visual, 0x69 = MP3.
+    Mp4ObjectType(u8),
+
+    /// Matroska `CodecID` element (full string, e.g.
+    /// `"V_MPEG4/ISO/AVC"`, `"A_AAC"`, `"A_VORBIS"`).
+    Matroska(String),
+}
+
+impl CodecTag {
+    /// Build a FourCC tag, upper-casing alphabetic bytes.
+    pub fn fourcc(raw: &[u8; 4]) -> Self {
+        let mut out = [0u8; 4];
+        for i in 0..4 {
+            out[i] = raw[i].to_ascii_uppercase();
+        }
+        Self::Fourcc(out)
+    }
+
+    pub fn wave_format(tag: u16) -> Self {
+        Self::WaveFormat(tag)
+    }
+
+    pub fn mp4_object_type(oti: u8) -> Self {
+        Self::Mp4ObjectType(oti)
+    }
+
+    pub fn matroska(id: impl Into<String>) -> Self {
+        Self::Matroska(id.into())
+    }
+}
+
+impl std::fmt::Display for CodecTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fourcc(fcc) => {
+                // Print as bytes when ASCII-printable, else as hex.
+                if fcc.iter().all(|b| b.is_ascii_graphic() || *b == b' ') {
+                    write!(f, "fourcc({})", std::str::from_utf8(fcc).unwrap_or("????"))
+                } else {
+                    write!(
+                        f,
+                        "fourcc(0x{:02X}{:02X}{:02X}{:02X})",
+                        fcc[0], fcc[1], fcc[2], fcc[3]
+                    )
+                }
+            }
+            Self::WaveFormat(t) => write!(f, "wFormatTag(0x{t:04X})"),
+            Self::Mp4ObjectType(o) => write!(f, "mp4_oti(0x{o:02X})"),
+            Self::Matroska(s) => write!(f, "matroska({s})"),
+        }
+    }
+}
+
 /// Codec-level parameters shared between demuxer/muxer and en/decoder.
 #[derive(Clone, Debug)]
 pub struct CodecParameters {
@@ -111,4 +193,58 @@ pub struct StreamInfo {
     pub duration: Option<i64>,
     pub start_time: Option<i64>,
     pub params: CodecParameters,
+}
+
+#[cfg(test)]
+mod codec_tag_tests {
+    use super::*;
+
+    #[test]
+    fn fourcc_uppercases_on_construction() {
+        let t = CodecTag::fourcc(b"div3");
+        assert_eq!(t, CodecTag::Fourcc(*b"DIV3"));
+        // Non-alphabetic bytes preserved unchanged.
+        let t2 = CodecTag::fourcc(b"MP42");
+        assert_eq!(t2, CodecTag::Fourcc(*b"MP42"));
+        let t3 = CodecTag::fourcc(&[0xFF, b'a', 0x00, b'1']);
+        assert_eq!(t3, CodecTag::Fourcc([0xFF, b'A', 0x00, b'1']));
+    }
+
+    #[test]
+    fn fourcc_equality_case_insensitive_via_ctor() {
+        assert_eq!(CodecTag::fourcc(b"xvid"), CodecTag::fourcc(b"XVID"));
+        assert_eq!(CodecTag::fourcc(b"DiV3"), CodecTag::fourcc(b"div3"));
+    }
+
+    #[test]
+    fn display_printable_fourcc() {
+        assert_eq!(CodecTag::fourcc(b"XVID").to_string(), "fourcc(XVID)");
+    }
+
+    #[test]
+    fn display_non_printable_fourcc_as_hex() {
+        let t = CodecTag::Fourcc([0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(t.to_string(), "fourcc(0x00000001)");
+    }
+
+    #[test]
+    fn display_wave_format() {
+        assert_eq!(
+            CodecTag::wave_format(0x0055).to_string(),
+            "wFormatTag(0x0055)"
+        );
+    }
+
+    #[test]
+    fn display_mp4_oti() {
+        assert_eq!(CodecTag::mp4_object_type(0x40).to_string(), "mp4_oti(0x40)");
+    }
+
+    #[test]
+    fn display_matroska() {
+        assert_eq!(
+            CodecTag::matroska("V_MPEG4/ISO/AVC").to_string(),
+            "matroska(V_MPEG4/ISO/AVC)",
+        );
+    }
 }
