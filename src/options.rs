@@ -79,9 +79,7 @@ impl CodecOptions {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.entries
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+        self.entries.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// Build a bag from a JSON object. Scalar values (bool / number /
@@ -90,8 +88,8 @@ impl CodecOptions {
     /// flat string bag.
     #[cfg(feature = "json-options")]
     pub fn from_json(s: &str) -> Result<Self> {
-        let v: serde_json::Value = serde_json::from_str(s)
-            .map_err(|e| Error::invalid(format!("options json: {e}")))?;
+        let v: serde_json::Value =
+            serde_json::from_str(s).map_err(|e| Error::invalid(format!("options json: {e}")))?;
         Self::from_json_value(&v)
     }
 
@@ -275,15 +273,18 @@ fn coerce(name: &str, kind: OptionKind, raw: &str) -> Result<OptionValue> {
                 "option '{name}' expects bool, got {other:?}"
             ))),
         },
-        OptionKind::U32 => raw.parse::<u32>().map(OptionValue::U32).map_err(|_| {
-            Error::invalid(format!("option '{name}' expects u32, got {raw:?}"))
-        }),
-        OptionKind::I32 => raw.parse::<i32>().map(OptionValue::I32).map_err(|_| {
-            Error::invalid(format!("option '{name}' expects i32, got {raw:?}"))
-        }),
-        OptionKind::F32 => raw.parse::<f32>().map(OptionValue::F32).map_err(|_| {
-            Error::invalid(format!("option '{name}' expects f32, got {raw:?}"))
-        }),
+        OptionKind::U32 => raw
+            .parse::<u32>()
+            .map(OptionValue::U32)
+            .map_err(|_| Error::invalid(format!("option '{name}' expects u32, got {raw:?}"))),
+        OptionKind::I32 => raw
+            .parse::<i32>()
+            .map(OptionValue::I32)
+            .map_err(|_| Error::invalid(format!("option '{name}' expects i32, got {raw:?}"))),
+        OptionKind::F32 => raw
+            .parse::<f32>()
+            .map(OptionValue::F32)
+            .map_err(|_| Error::invalid(format!("option '{name}' expects f32, got {raw:?}"))),
         OptionKind::String => Ok(OptionValue::String(raw.to_owned())),
         OptionKind::Enum(allowed) => {
             if allowed.iter().any(|a| *a == raw) {
@@ -400,8 +401,16 @@ mod tests {
 
     #[test]
     fn bool_accepts_common_synonyms() {
-        for (raw, want) in [("true", true), ("1", true), ("yes", true), ("on", true),
-                             ("false", false), ("0", false), ("no", false), ("off", false)] {
+        for (raw, want) in [
+            ("true", true),
+            ("1", true),
+            ("yes", true),
+            ("on", true),
+            ("false", false),
+            ("0", false),
+            ("no", false),
+            ("off", false),
+        ] {
             let opts = CodecOptions::new().set("interlace", raw);
             let d = parse_options::<Demo>(&opts).unwrap();
             assert_eq!(d.interlace, want, "raw = {raw}");
@@ -411,7 +420,8 @@ mod tests {
     #[cfg(feature = "json-options")]
     #[test]
     fn from_json_object() {
-        let bag = CodecOptions::from_json(r#"{"interlace": true, "level": 9, "mode": "fast"}"#).unwrap();
+        let bag =
+            CodecOptions::from_json(r#"{"interlace": true, "level": 9, "mode": "fast"}"#).unwrap();
         let d = parse_options::<Demo>(&bag).unwrap();
         assert!(d.interlace);
         assert_eq!(d.level, 9);
