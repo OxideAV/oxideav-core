@@ -189,6 +189,42 @@ impl<'a> BitReader<'a> {
         self.skip(n)
     }
 
+    /// Read a unary-coded value: the count of leading zero bits, terminated
+    /// by a single `1`. Used by FLAC Rice residuals and any other codec
+    /// that needs variable-length counts. Uses `leading_zeros()` on the
+    /// 64-bit accumulator for the fast path.
+    pub fn read_unary(&mut self) -> Result<u32> {
+        let mut count = 0u32;
+        loop {
+            if self.bits_in_acc == 0 {
+                self.refill();
+                if self.bits_in_acc == 0 {
+                    return Err(Error::invalid("bitreader: out of bits in unary code"));
+                }
+            }
+            let lz_total = self.acc.leading_zeros();
+            let lz_avail = lz_total.min(self.bits_in_acc);
+            count = count
+                .checked_add(lz_avail)
+                .ok_or_else(|| Error::invalid("bitreader: unary count overflow"))?;
+            // Shifting a u64 by 64 is UB in Rust — guard that case. It only
+            // arises for very long zero runs.
+            if lz_avail >= 64 {
+                self.acc = 0;
+            } else {
+                self.acc <<= lz_avail;
+            }
+            self.bits_in_acc -= lz_avail;
+            if lz_avail < lz_total || self.bits_in_acc == 0 {
+                continue;
+            }
+            // Consume the terminating 1 bit.
+            self.acc <<= 1;
+            self.bits_in_acc -= 1;
+            return Ok(count);
+        }
+    }
+
     /// Read `n` bytes. Requires the reader to be byte-aligned.
     pub fn read_bytes(&mut self, n: usize) -> Result<Vec<u8>> {
         if !self.is_byte_aligned() {
@@ -300,6 +336,20 @@ impl BitWriter {
 
     pub fn write_bit(&mut self, bit: bool) {
         self.write_u32(bit as u32, 1);
+    }
+
+    /// Emit a unary-coded value: `n` zero bits followed by a single `1`.
+    /// Inverse of [`BitReader::read_unary`].
+    pub fn write_unary(&mut self, n: u32) {
+        let mut remaining = n;
+        while remaining >= 32 {
+            self.write_u32(0, 32);
+            remaining -= 32;
+        }
+        if remaining > 0 {
+            self.write_u32(0, remaining);
+        }
+        self.write_bit(true);
     }
 
     pub fn write_byte(&mut self, b: u8) {
@@ -639,6 +689,20 @@ mod tests {
         let bytes = w.finish();
         let mut r = BitReader::new(&bytes);
         assert_eq!(r.read_u64(64).unwrap(), 0x1234567890ABCDEF);
+    }
+
+    #[test]
+    fn msb_unary_roundtrip() {
+        let mut w = BitWriter::new();
+        let counts: Vec<u32> = vec![0, 1, 7, 31, 32, 33, 64, 65, 100];
+        for &c in &counts {
+            w.write_unary(c);
+        }
+        let bytes = w.finish();
+        let mut r = BitReader::new(&bytes);
+        for &c in &counts {
+            assert_eq!(r.read_unary().unwrap(), c, "unary roundtrip for {c}");
+        }
     }
 
     #[test]
