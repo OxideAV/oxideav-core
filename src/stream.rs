@@ -1,6 +1,7 @@
 //! Stream metadata shared between containers and codecs.
 
 use crate::format::{MediaType, PixelFormat, SampleFormat};
+use crate::options::CodecOptions;
 use crate::rational::Rational;
 use crate::time::TimeBase;
 
@@ -268,6 +269,13 @@ pub struct CodecParameters {
     pub extradata: Vec<u8>,
 
     pub bit_rate: Option<u64>,
+
+    /// Codec-specific tuning knobs (e.g. `{"interlace": "true"}` for PNG's
+    /// Adam7 encode, `{"crf": "23"}` for h264). Empty by default. The shape
+    /// is declared by each codec's options struct — see
+    /// [`crate::options`]. Parsed once at encoder/decoder construction;
+    /// the hot path never touches this.
+    pub options: CodecOptions,
 }
 
 impl CodecParameters {
@@ -284,6 +292,7 @@ impl CodecParameters {
             frame_rate: None,
             extradata: Vec::new(),
             bit_rate: None,
+            options: CodecOptions::default(),
         }
     }
 
@@ -315,6 +324,7 @@ impl CodecParameters {
             frame_rate: None,
             extradata: Vec::new(),
             bit_rate: None,
+            options: CodecOptions::default(),
         }
     }
 }

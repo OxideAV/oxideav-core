@@ -12,5 +12,13 @@ readme = "README.md"
 keywords = ["multimedia", "audio", "video", "codec", "pure-rust"]
 categories = ["multimedia", "encoding"]
 
+[features]
+default = []
+# Enables `CodecOptions::from_json` / `parse_options_json` for consumers
+# that carry codec tuning as JSON (e.g. oxideav-pipeline). Adds a
+# `serde_json` dependency; default off to keep the core dep-light.
+json-options = ["dep:serde_json"]
+
 [dependencies]
 thiserror = "1"
+serde_json = { version = "1", optional = true }

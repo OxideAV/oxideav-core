@@ -10,6 +10,7 @@ pub mod error;
 pub mod execution;
 pub mod format;
 pub mod frame;
+pub mod options;
 pub mod packet;
 pub mod picture;
 pub mod rational;
@@ -22,6 +23,9 @@ pub use error::{Error, Result};
 pub use execution::ExecutionContext;
 pub use format::{MediaType, PixelFormat, SampleFormat};
 pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
+pub use options::{
+    parse_options, CodecOptions, CodecOptionsStruct, OptionField, OptionKind, OptionValue,
+};
 pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
