@@ -113,6 +113,32 @@ impl std::fmt::Display for CodecTag {
     }
 }
 
+/// Resolve a [`CodecTag`] (FourCC / WAVEFORMATEX / Matroska id / …) to a
+/// [`CodecId`]. The [`oxideav-codec`](https://crates.io/crates/oxideav-codec)
+/// registry implements this, but defining the trait here lets
+/// containers consume tag resolution via `&dyn CodecResolver` without
+/// pulling in the codec crate as a direct dependency.
+///
+/// `probe_data` — when `Some` — should carry enough of the first
+/// packet's bytes for any registered probe function to look at. Pass
+/// `None` if the demuxer hasn't read a packet yet; the registry falls
+/// back to priority-only resolution.
+pub trait CodecResolver: Sync {
+    fn resolve_tag(&self, tag: &CodecTag, probe_data: Option<&[u8]>) -> Option<CodecId>;
+}
+
+/// Null resolver that resolves nothing — useful as a default when a
+/// caller doesn't have a real registry handy (e.g. unit tests, or
+/// legacy callers of the tag-free `open()` APIs).
+#[derive(Default, Clone, Copy)]
+pub struct NullCodecResolver;
+
+impl CodecResolver for NullCodecResolver {
+    fn resolve_tag(&self, _tag: &CodecTag, _probe_data: Option<&[u8]>) -> Option<CodecId> {
+        None
+    }
+}
+
 /// Codec-level parameters shared between demuxer/muxer and en/decoder.
 #[derive(Clone, Debug)]
 pub struct CodecParameters {
@@ -246,5 +272,15 @@ mod codec_tag_tests {
             CodecTag::matroska("V_MPEG4/ISO/AVC").to_string(),
             "matroska(V_MPEG4/ISO/AVC)",
         );
+    }
+
+    #[test]
+    fn null_resolver_resolves_nothing() {
+        let r = NullCodecResolver;
+        assert!(r.resolve_tag(&CodecTag::fourcc(b"XVID"), None).is_none());
+        assert!(r
+            .resolve_tag(&CodecTag::fourcc(b"XVID"), Some(b"anything"))
+            .is_none());
+        assert!(r.resolve_tag(&CodecTag::wave_format(0x0055), None).is_none());
     }
 }
