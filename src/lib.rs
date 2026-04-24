@@ -8,6 +8,7 @@ pub mod bits;
 pub mod capabilities;
 pub mod error;
 pub mod execution;
+pub mod filter;
 pub mod format;
 pub mod frame;
 pub mod options;
@@ -21,6 +22,7 @@ pub mod time;
 pub use capabilities::{CodecCapabilities, CodecPreferences, DEFAULT_PRIORITY};
 pub use error::{Error, Result};
 pub use execution::ExecutionContext;
+pub use filter::{FilterContext, PortParams, PortSpec, StreamFilter};
 pub use format::{MediaType, PixelFormat, SampleFormat};
 pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
 pub use options::{
