@@ -334,6 +334,47 @@ impl CodecParameters {
             options: CodecOptions::default(),
         }
     }
+
+    /// Construct subtitle codec parameters. No format-specific fields
+    /// are populated — subtitle codecs typically only carry an opaque
+    /// `extradata` blob (the format's header / style block) and the
+    /// codec id.
+    pub fn subtitle(codec_id: CodecId) -> Self {
+        Self {
+            codec_id,
+            media_type: MediaType::Subtitle,
+            sample_rate: None,
+            channels: None,
+            sample_format: None,
+            width: None,
+            height: None,
+            pixel_format: None,
+            frame_rate: None,
+            extradata: Vec::new(),
+            bit_rate: None,
+            options: CodecOptions::default(),
+        }
+    }
+
+    /// Construct generic data-stream codec parameters (timed metadata,
+    /// chapters, etc.). Like [`Self::subtitle`], no format-specific
+    /// fields are populated.
+    pub fn data(codec_id: CodecId) -> Self {
+        Self {
+            codec_id,
+            media_type: MediaType::Data,
+            sample_rate: None,
+            channels: None,
+            sample_format: None,
+            width: None,
+            height: None,
+            pixel_format: None,
+            frame_rate: None,
+            extradata: Vec::new(),
+            bit_rate: None,
+            options: CodecOptions::default(),
+        }
+    }
 }
 
 /// Description of a single stream inside a container.
