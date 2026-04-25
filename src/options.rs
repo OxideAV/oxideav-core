@@ -86,7 +86,6 @@ impl CodecOptions {
     /// string) are stringified into the bag; arrays and nested objects
     /// are rejected — keys with structured values don't map into the
     /// flat string bag.
-    #[cfg(feature = "json-options")]
     pub fn from_json(s: &str) -> Result<Self> {
         let v: serde_json::Value =
             serde_json::from_str(s).map_err(|e| Error::invalid(format!("options json: {e}")))?;
@@ -95,7 +94,6 @@ impl CodecOptions {
 
     /// As [`from_json`](Self::from_json) but takes a pre-parsed value
     /// (the shape pipelines already use — `TrackSpec.codec_params`).
-    #[cfg(feature = "json-options")]
     pub fn from_json_value(v: &serde_json::Value) -> Result<Self> {
         use serde_json::Value;
         let obj = match v {
@@ -128,7 +126,6 @@ impl CodecOptions {
     }
 }
 
-#[cfg(feature = "json-options")]
 fn json_type_name(v: &serde_json::Value) -> &'static str {
     use serde_json::Value;
     match v {
@@ -258,8 +255,7 @@ pub fn parse_options<T: CodecOptionsStruct>(opts: &CodecOptions) -> Result<T> {
     Ok(out)
 }
 
-/// Shorthand: parse straight from a JSON-object source. Feature-gated.
-#[cfg(feature = "json-options")]
+/// Shorthand: parse straight from a JSON-object source.
 pub fn parse_options_json<T: CodecOptionsStruct>(s: &str) -> Result<T> {
     parse_options::<T>(&CodecOptions::from_json(s)?)
 }
@@ -417,7 +413,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "json-options")]
     #[test]
     fn from_json_object() {
         let bag =
@@ -428,21 +423,18 @@ mod tests {
         assert_eq!(d.mode, "fast");
     }
 
-    #[cfg(feature = "json-options")]
     #[test]
     fn from_json_null_is_empty() {
         let bag = CodecOptions::from_json("null").unwrap();
         assert!(bag.is_empty());
     }
 
-    #[cfg(feature = "json-options")]
     #[test]
     fn from_json_rejects_nested() {
         let err = CodecOptions::from_json(r#"{"k": [1, 2]}"#).unwrap_err();
         assert!(matches!(err, Error::InvalidData(ref s) if s.contains("structured")));
     }
 
-    #[cfg(feature = "json-options")]
     #[test]
     fn parse_options_json_shortcut() {
         let d = parse_options_json::<Demo>(r#"{"level": 3}"#).unwrap();

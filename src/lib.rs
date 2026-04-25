@@ -1,8 +1,10 @@
-//! Core types for the oxideav framework.
+//! Core types and registries for the oxideav framework.
 //!
-//! This crate intentionally depends on nothing but `thiserror`. All codecs,
-//! containers, filters, and frontends build on top of the primitives defined
-//! here.
+//! This crate is the dependency-light foundation: primitive types
+//! (timestamps, packets, frames, media formats) plus the registries
+//! every sibling crate registers itself into. The aggregate
+//! [`RuntimeContext`] bundles all four registries (codec / container /
+//! source / filter) into a single value that consumers pass around.
 
 pub mod bits;
 pub mod capabilities;
@@ -15,6 +17,7 @@ pub mod options;
 pub mod packet;
 pub mod picture;
 pub mod rational;
+pub mod registry;
 pub mod stream;
 pub mod subtitle;
 pub mod time;
@@ -31,6 +34,12 @@ pub use options::{
 pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
+pub use registry::{
+    CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn, ContainerRegistry, Decoder,
+    DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory, FilterRegistry, OpenDemuxerFn,
+    OpenMuxerFn, OpenSourceFn, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceRegistry,
+    WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
+};
 pub use stream::{
     CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,
     ProbeFn, StreamInfo,

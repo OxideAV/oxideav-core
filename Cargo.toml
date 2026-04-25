@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.80"
 license = "MIT"
 authors = ["Mark Karpeles"]
-description = "Core types for oxideav — timestamps, packets, frames, media formats (pure Rust, no C deps)"
+description = "Core types and registries for oxideav — timestamps, packets, frames, codec/container/source/filter registries (pure Rust, no C deps)"
 repository = "https://github.com/OxideAV/oxideav-core"
 homepage = "https://github.com/OxideAV/oxideav-core"
 readme = "README.md"
@@ -14,11 +14,12 @@ categories = ["multimedia", "encoding"]
 
 [features]
 default = []
-# Enables `CodecOptions::from_json` / `parse_options_json` for consumers
-# that carry codec tuning as JSON (e.g. oxideav-pipeline). Adds a
-# `serde_json` dependency; default off to keep the core dep-light.
-json-options = ["dep:serde_json"]
+# Retained as a no-op alias for back-compat — `serde_json` is now a
+# hard dep of `oxideav-core` (the FilterFactory signature uses
+# `serde_json::Value`). Consumers that previously gated on this can
+# drop the feature flag entirely.
+json-options = []
 
 [dependencies]
 thiserror = "2"
-serde_json = { version = "1", optional = true }
+serde_json = "1"
