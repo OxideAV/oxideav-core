@@ -165,6 +165,19 @@ pub trait StreamFilter: Send {
     fn flush(&mut self, _ctx: &mut dyn FilterContext) -> Result<()> {
         Ok(())
     }
+
+    /// Reset internal state on a flow barrier (seek). Drops any buffered
+    /// frames silently — unlike `flush`, no frames are emitted, because
+    /// the upstream pipeline is going to start delivering frames from a
+    /// new wall-clock position. Filters with rolling windows
+    /// (spectrogram) or temporal smoothing should restart from empty so
+    /// the user sees a clean cut over the seek.
+    ///
+    /// Default no-op so stateless / freshly-restartable filters need no
+    /// boilerplate.
+    fn reset(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Helper used by pipeline registries when a named filter isn't known.
