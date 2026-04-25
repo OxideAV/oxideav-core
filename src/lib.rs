@@ -36,9 +36,9 @@ pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
 pub use registry::{
     CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn, ContainerRegistry, Decoder,
-    DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory, FilterRegistry, OpenDemuxerFn,
-    OpenMuxerFn, OpenSourceFn, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceRegistry,
-    WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
+    DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory, FilterRegistry, Muxer,
+    OpenDemuxerFn, OpenMuxerFn, OpenSourceFn, ProbeData, ProbeScore, ReadSeek, RuntimeContext,
+    SourceRegistry, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
 };
 pub use stream::{
     CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,
