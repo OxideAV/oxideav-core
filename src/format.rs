@@ -119,6 +119,10 @@ pub enum PixelFormat {
     Yuv444P10Le,
     /// 12-bit YUV 4:2:0 planar, little-endian 16-bit storage.
     Yuv420P12Le,
+    /// 12-bit YUV 4:2:2 planar, little-endian 16-bit storage.
+    Yuv422P12Le,
+    /// 12-bit YUV 4:4:4 planar, little-endian 16-bit storage.
+    Yuv444P12Le,
 
     // --- Full-range ("J") YUV ---
     /// JPEG/full-range YUV 4:2:0 planar.
@@ -174,6 +178,8 @@ impl PixelFormat {
                 | Self::Yuv422P10Le
                 | Self::Yuv444P10Le
                 | Self::Yuv420P12Le
+                | Self::Yuv422P12Le
+                | Self::Yuv444P12Le
                 | Self::YuvJ420P
                 | Self::YuvJ422P
                 | Self::YuvJ444P
@@ -215,6 +221,8 @@ impl PixelFormat {
             | Self::Yuv422P10Le
             | Self::Yuv444P10Le
             | Self::Yuv420P12Le
+            | Self::Yuv422P12Le
+            | Self::Yuv444P12Le
             | Self::YuvJ420P
             | Self::YuvJ422P
             | Self::YuvJ444P => 3,
@@ -245,9 +253,49 @@ impl PixelFormat {
             Self::Yuv422P | Self::YuvJ422P => 16,
             Self::Yuv444P | Self::YuvJ444P => 24,
             Self::Yuv420P10Le | Self::Yuv420P12Le => 24,
-            Self::Yuv422P10Le => 32,
-            Self::Yuv444P10Le => 48,
+            Self::Yuv422P10Le | Self::Yuv422P12Le => 32,
+            Self::Yuv444P10Le | Self::Yuv444P12Le => 48,
             Self::Yuva420P => 20,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn high_bit_yuv_planar_metadata() {
+        // 10-bit reference variants are planar with three planes.
+        assert!(PixelFormat::Yuv420P10Le.is_planar());
+        assert!(PixelFormat::Yuv422P10Le.is_planar());
+        assert!(PixelFormat::Yuv444P10Le.is_planar());
+
+        // 12-bit variants must follow the same shape.
+        assert!(PixelFormat::Yuv420P12Le.is_planar());
+        assert!(PixelFormat::Yuv422P12Le.is_planar());
+        assert!(PixelFormat::Yuv444P12Le.is_planar());
+
+        assert_eq!(PixelFormat::Yuv420P12Le.plane_count(), 3);
+        assert_eq!(PixelFormat::Yuv422P12Le.plane_count(), 3);
+        assert_eq!(PixelFormat::Yuv444P12Le.plane_count(), 3);
+
+        // None of the high-bit YUV variants carry alpha or palette.
+        assert!(!PixelFormat::Yuv422P12Le.has_alpha());
+        assert!(!PixelFormat::Yuv444P12Le.has_alpha());
+        assert!(!PixelFormat::Yuv422P12Le.is_palette());
+        assert!(!PixelFormat::Yuv444P12Le.is_palette());
+    }
+
+    #[test]
+    fn high_bit_yuv_bits_per_pixel_approx() {
+        // 4:2:2 and 4:4:4 12-bit match their 10-bit siblings on the
+        // packed-bits estimator (the approximation reports samples-per-pixel
+        // density, not the 16-bit storage width).
+        assert_eq!(PixelFormat::Yuv422P10Le.bits_per_pixel_approx(), 32);
+        assert_eq!(PixelFormat::Yuv422P12Le.bits_per_pixel_approx(), 32);
+        assert_eq!(PixelFormat::Yuv444P10Le.bits_per_pixel_approx(), 48);
+        assert_eq!(PixelFormat::Yuv444P12Le.bits_per_pixel_approx(), 48);
+        assert_eq!(PixelFormat::Yuv420P12Le.bits_per_pixel_approx(), 24);
     }
 }

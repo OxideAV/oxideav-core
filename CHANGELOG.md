@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `PixelFormat::Yuv422P12Le` and `PixelFormat::Yuv444P12Le` — 12-bit
+  4:2:2 and 4:4:4 planar YUV with little-endian 16-bit storage. Unblocks
+  HEVC Main 12 4:2:2 / 4:4:4 surfaces in oxideav-h265.
+
 ## [0.1.6](https://github.com/OxideAV/oxideav-core/compare/v0.1.5...v0.1.6) - 2026-04-25
 
 ### Added
