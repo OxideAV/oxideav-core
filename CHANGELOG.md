@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/OxideAV/oxideav-core/compare/v0.1.4...v0.1.5) - 2026-04-25
+
+### Other
+
+- re-export Muxer trait from registry::container
+- absorb codec/container/source/filter registries + RuntimeContext
+
 ## [0.1.4](https://github.com/OxideAV/oxideav-core/compare/v0.1.3...v0.1.4) - 2026-04-25
 
 ### Other
