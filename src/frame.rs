@@ -1,8 +1,6 @@
 //! Uncompressed audio and video frames.
 
-use crate::format::{PixelFormat, SampleFormat};
 use crate::subtitle::SubtitleCue;
-use crate::time::TimeBase;
 
 /// A decoded chunk of uncompressed data: either audio samples, a video
 /// picture, or (for subtitle streams) a single styled cue.
@@ -30,66 +28,42 @@ impl Frame {
             Self::Subtitle(s) => Some(s.start_us),
         }
     }
-
-    pub fn time_base(&self) -> TimeBase {
-        match self {
-            Self::Audio(a) => a.time_base,
-            Self::Video(v) => v.time_base,
-            // Subtitle cues carry raw microseconds. Expose a 1/1_000_000
-            // base so the value lines up with the pts() result above.
-            Self::Subtitle(_) => TimeBase::new(1, 1_000_000),
-        }
-    }
 }
 
 /// Uncompressed audio frame.
 ///
-/// Sample layout is determined by `format`:
+/// Stream-level properties (sample format, channel count, sample rate,
+/// time base) are NOT carried per-frame — read them from the stream's
+/// [`CodecParameters`](crate::CodecParameters). Frames stay lightweight
+/// because real-time playback moves thousands per second per stream.
+///
+/// Sample layout is determined by the stream's `SampleFormat`:
 /// - Interleaved formats: `data` has one plane; samples are stored as
 ///   `ch0 ch1 ... chN ch0 ch1 ... chN ...`.
 /// - Planar formats: `data` has one plane per channel.
 ///
-/// Speaker layout is **not** carried on the frame — it is a stream
-/// property that lives on
-/// [`CodecParameters::channel_layout`](crate::CodecParameters::channel_layout).
-/// Read it once from the stream and pass it down to whatever consumer
-/// needs to interpret the per-channel data; the frame itself only knows
-/// how many channels' worth of samples it carries.
+/// Use [`SampleFormat::plane_count`](crate::SampleFormat::plane_count)
+/// with the stream's channel count to compute the expected `data.len()`.
 #[derive(Clone, Debug)]
 pub struct AudioFrame {
-    pub format: SampleFormat,
-    /// Channel count for buffer sizing. The semantic channel layout for
-    /// the stream is on
-    /// [`CodecParameters::channel_layout`](crate::CodecParameters::channel_layout)
-    /// — derive it from the stream params, not from this count.
-    pub channels: u16,
-    pub sample_rate: u32,
-    /// Number of samples *per channel*.
+    /// Number of samples *per channel* in this frame. Variable per-frame
+    /// for VBR codecs and on partial flushes.
     pub samples: u32,
     pub pts: Option<i64>,
-    pub time_base: TimeBase,
-    /// Raw sample bytes. `.len() == planes()` — i.e. one element per plane.
+    /// Raw sample bytes. Length matches `format.plane_count(channels)`
+    /// from the stream's `CodecParameters`.
     pub data: Vec<Vec<u8>>,
 }
 
-impl AudioFrame {
-    pub fn planes(&self) -> usize {
-        if self.format.is_planar() {
-            self.channels as usize
-        } else {
-            1
-        }
-    }
-}
-
 /// Uncompressed video frame.
+///
+/// Stream-level properties (pixel format, width, height, time base) are
+/// NOT carried per-frame — read them from the stream's
+/// [`CodecParameters`](crate::CodecParameters). Frames stay lightweight
+/// because real-time playback moves thousands per second per stream.
 #[derive(Clone, Debug)]
 pub struct VideoFrame {
-    pub format: PixelFormat,
-    pub width: u32,
-    pub height: u32,
     pub pts: Option<i64>,
-    pub time_base: TimeBase,
     /// One entry per plane (e.g., 3 for Yuv420P). Each entry is `(stride, bytes)`.
     pub planes: Vec<VideoPlane>,
 }

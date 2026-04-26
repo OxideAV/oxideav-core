@@ -245,12 +245,8 @@ mod tests {
         assert_eq!(f.output_ports()[1].kind, MediaType::Video);
 
         let audio = AudioFrame {
-            format: SampleFormat::S16,
-            sample_rate: 48_000,
-            channels: 2,
             samples: 0,
             pts: None,
-            time_base: TimeBase::new(1, 48_000),
             data: vec![vec![]; 2],
         };
         let mut ctx = CollectCtx { out: Vec::new() };
@@ -263,18 +259,16 @@ mod tests {
     fn video_frame_shape_is_unchanged() {
         // Guard: this trait module does not change the VideoFrame /
         // AudioFrame types. Anything consuming `Frame` via the trait
-        // treats them as opaque carriers.
+        // treats them as opaque carriers. Stream-level properties
+        // (format/dimensions/time_base) live on the stream's
+        // `CodecParameters`, not the frame.
         let vf = VideoFrame {
-            format: PixelFormat::Rgb24,
-            width: 4,
-            height: 2,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: 12,
                 data: vec![0u8; 24],
             }],
         };
-        assert_eq!(vf.width, 4);
+        assert_eq!(vf.planes.len(), 1);
     }
 }

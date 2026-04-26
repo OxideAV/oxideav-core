@@ -390,6 +390,18 @@ impl SampleFormat {
     pub fn is_float(&self) -> bool {
         matches!(self, Self::F32 | Self::F64 | Self::F32P | Self::F64P)
     }
+
+    /// Number of `Vec<u8>` planes an [`AudioFrame`](crate::AudioFrame)
+    /// of this format carries for `channels` channels: planar formats
+    /// use one plane per channel, interleaved formats use one plane
+    /// total.
+    pub fn plane_count(&self, channels: u16) -> usize {
+        if self.is_planar() {
+            channels as usize
+        } else {
+            1
+        }
+    }
 }
 
 /// Video pixel format.
@@ -773,6 +785,30 @@ mod tests {
         }
         // DiscreteN returns an empty owned vec — positions are unknown.
         assert!(ChannelLayout::DiscreteN(7).positions_owned().is_empty());
+    }
+
+    #[test]
+    fn sample_format_plane_count_interleaved_is_one() {
+        // Interleaved formats always pack into a single plane, regardless
+        // of channel count.
+        for ch in [1u16, 2, 6, 8, 64, 0] {
+            assert_eq!(SampleFormat::S16.plane_count(ch), 1);
+            assert_eq!(SampleFormat::F32.plane_count(ch), 1);
+            assert_eq!(SampleFormat::U8.plane_count(ch), 1);
+            assert_eq!(SampleFormat::S24.plane_count(ch), 1);
+        }
+    }
+
+    #[test]
+    fn sample_format_plane_count_planar_matches_channels() {
+        // Planar formats use one plane per channel.
+        assert_eq!(SampleFormat::S16P.plane_count(1), 1);
+        assert_eq!(SampleFormat::S16P.plane_count(2), 2);
+        assert_eq!(SampleFormat::F32P.plane_count(6), 6);
+        assert_eq!(SampleFormat::F64P.plane_count(8), 8);
+
+        // Edge case: zero channels in a planar format yields zero planes.
+        assert_eq!(SampleFormat::S32P.plane_count(0), 0);
     }
 
     #[test]
