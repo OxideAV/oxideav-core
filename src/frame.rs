@@ -1,6 +1,6 @@
 //! Uncompressed audio and video frames.
 
-use crate::format::{ChannelLayout, PixelFormat, SampleFormat};
+use crate::format::{PixelFormat, SampleFormat};
 use crate::subtitle::SubtitleCue;
 use crate::time::TimeBase;
 
@@ -49,16 +49,19 @@ impl Frame {
 ///   `ch0 ch1 ... chN ch0 ch1 ... chN ...`.
 /// - Planar formats: `data` has one plane per channel.
 ///
-/// Speaker layout is *derived* from `channels` via
-/// [`ChannelLayout::from_count`] in the [`Self::layout`] accessor. A
-/// future revision can add an optional `channel_layout` field for codecs
-/// that decode an explicit layout from their bitstream; until then, all
-/// downstream codecs that produce an [`AudioFrame`] keep working
-/// unchanged and downmix / device-routing filters can read
-/// `frame.layout()` to get a `ChannelLayout` value.
+/// Speaker layout is **not** carried on the frame — it is a stream
+/// property that lives on
+/// [`CodecParameters::channel_layout`](crate::CodecParameters::channel_layout).
+/// Read it once from the stream and pass it down to whatever consumer
+/// needs to interpret the per-channel data; the frame itself only knows
+/// how many channels' worth of samples it carries.
 #[derive(Clone, Debug)]
 pub struct AudioFrame {
     pub format: SampleFormat,
+    /// Channel count for buffer sizing. The semantic channel layout for
+    /// the stream is on
+    /// [`CodecParameters::channel_layout`](crate::CodecParameters::channel_layout)
+    /// — derive it from the stream params, not from this count.
     pub channels: u16,
     pub sample_rate: u32,
     /// Number of samples *per channel*.
@@ -76,20 +79,6 @@ impl AudioFrame {
         } else {
             1
         }
-    }
-
-    /// Effective speaker layout, inferred from [`Self::channels`] via
-    /// [`ChannelLayout::from_count`].
-    ///
-    /// All `AudioFrame` instances "know" their layout: counts in 1..=8
-    /// resolve to a named layout (`Mono`, `Stereo`, `Surround51`, …),
-    /// anything else falls through to `ChannelLayout::DiscreteN(n)`. This
-    /// derived approach means existing codecs that build an `AudioFrame`
-    /// via struct-literal syntax continue to compile unchanged — the
-    /// layout machinery layered on top in [`crate::format`] supplies the
-    /// missing structure on demand.
-    pub fn layout(&self) -> ChannelLayout {
-        ChannelLayout::from_count(self.channels)
     }
 }
 
@@ -110,35 +99,4 @@ pub struct VideoPlane {
     /// Bytes per row in `data`.
     pub stride: usize,
     pub data: Vec<u8>,
-}
-
-#[cfg(test)]
-mod audio_frame_layout_tests {
-    use super::*;
-
-    fn af(channels: u16) -> AudioFrame {
-        AudioFrame {
-            format: SampleFormat::S16,
-            channels,
-            sample_rate: 48_000,
-            samples: 1024,
-            pts: None,
-            time_base: TimeBase::new(1, 48_000),
-            data: vec![Vec::new()],
-        }
-    }
-
-    #[test]
-    fn layout_infers_known_named_layouts_from_channel_count() {
-        assert_eq!(af(1).layout(), ChannelLayout::Mono);
-        assert_eq!(af(2).layout(), ChannelLayout::Stereo);
-        assert_eq!(af(6).layout(), ChannelLayout::Surround51);
-        assert_eq!(af(8).layout(), ChannelLayout::Surround71);
-    }
-
-    #[test]
-    fn layout_falls_through_to_discrete_for_unusual_counts() {
-        assert_eq!(af(13).layout(), ChannelLayout::DiscreteN(13));
-        assert_eq!(af(0).layout(), ChannelLayout::DiscreteN(0));
-    }
 }

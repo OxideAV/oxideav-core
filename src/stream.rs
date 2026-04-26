@@ -265,11 +265,16 @@ pub struct CodecParameters {
     pub sample_rate: Option<u32>,
     pub channels: Option<u16>,
     pub sample_format: Option<SampleFormat>,
-    /// Speaker layout for the audio stream. Optional and additive
-    /// alongside [`channels`](Self::channels): a codec/container that
-    /// only knows the count can leave this `None` and consumers will
-    /// fall back to [`ChannelLayout::from_count`]. When both are set,
-    /// they must agree on channel count — see [`Self::resolved_layout`].
+    /// Speaker layout for the audio stream. **This is the canonical
+    /// answer to "what layout does this stream have?"** — layout is a
+    /// stream-level property and is intentionally *not* duplicated on
+    /// individual [`AudioFrame`](crate::AudioFrame)s.
+    ///
+    /// Optional and additive alongside [`channels`](Self::channels): a
+    /// codec/container that only knows the count can leave this `None`
+    /// and consumers will fall back to [`ChannelLayout::from_count`]
+    /// via [`Self::resolved_layout`]. When both are set, they must
+    /// agree on channel count.
     pub channel_layout: Option<ChannelLayout>,
 
     // Video-specific
@@ -414,6 +419,12 @@ impl CodecParameters {
     /// [`ChannelLayout::from_count`]. Returns `None` only when neither
     /// field is populated (e.g. video / data streams, or audio params
     /// surfaced before the codec has been opened).
+    ///
+    /// This is the canonical call-site for resolving a stream's
+    /// channel layout — frames do *not* carry layout, so audio
+    /// consumers (downmix, device routing, channel-aware filters)
+    /// should read it from the stream's `CodecParameters` once and
+    /// pass it down with the frame.
     pub fn resolved_layout(&self) -> Option<ChannelLayout> {
         self.channel_layout
             .or_else(|| self.channels.map(ChannelLayout::from_count))
