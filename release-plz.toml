@@ -7,6 +7,17 @@ allow_dirty = false
 git_tag_name = "v{{ version }}"
 git_release_name = "v{{ version }}"
 
+# Stay on the 0.1.x train. Frame/format API surface is still in flux —
+# the slim-frame refactor (April 2026) and any future shape changes will
+# trip `cargo-semver-checks` and release-plz would propose 0.2.0 as a
+# result. Disable the semver-driven bump so release-plz only acts on
+# conventional-commit hints (fix: → patch). PixelFormat / SampleFormat
+# variant discriminants are pinned in src/format.rs as a separate
+# stability commitment for any byte-stable consumer that round-trips
+# them. When the public API stabilises, drop this line and version-bump
+# deliberately.
+semver_check = false
+
 # Force patch-only bumps until we deliberately cut a 1.0. Without
 # these never-match overrides release-plz will minor-bump on `feat:`
 # commits or whenever cargo-semver-checks reports an API break — and

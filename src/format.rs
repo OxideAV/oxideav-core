@@ -344,28 +344,39 @@ impl std::str::FromStr for ChannelLayout {
 }
 
 /// Audio sample format.
+///
+/// Variants carry **stable explicit discriminants** — the integer value
+/// of `SampleFormat::S16 as u8` is part of the public ABI. Add new
+/// variants only at the end with a fresh number; never reorder, renumber,
+/// or remove. `#[non_exhaustive]` lets the enum grow without breaking
+/// downstream `match` statements; pinned discriminants additionally let
+/// the format round-trip through any byte-stable serialization
+/// (config files, capability blobs, IPC) without losing meaning across
+/// crate versions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[repr(u8)]
 pub enum SampleFormat {
     /// Unsigned 8-bit, interleaved.
-    U8,
+    U8 = 0,
     /// Signed 8-bit, interleaved. Native format of Amiga 8SVX and MOD samples.
-    S8,
+    S8 = 1,
     /// Signed 16-bit little-endian, interleaved.
-    S16,
+    S16 = 2,
     /// Signed 24-bit packed (3 bytes/sample) little-endian, interleaved.
-    S24,
+    S24 = 3,
     /// Signed 32-bit little-endian, interleaved.
-    S32,
+    S32 = 4,
     /// 32-bit IEEE float, interleaved.
-    F32,
+    F32 = 5,
     /// 64-bit IEEE float, interleaved.
-    F64,
+    F64 = 6,
     /// Planar variants — one plane per channel.
-    U8P,
-    S16P,
-    S32P,
-    F32P,
-    F64P,
+    U8P = 7,
+    S16P = 8,
+    S32P = 9,
+    F32P = 10,
+    F64P = 11,
 }
 
 impl SampleFormat {
@@ -406,101 +417,111 @@ impl SampleFormat {
 
 /// Video pixel format.
 ///
+/// Variants carry **stable explicit discriminants** — the integer value
+/// of `PixelFormat::Yuv420P as u16` is part of the public ABI. Add new
+/// variants only at the end with a fresh number; never reorder, renumber,
+/// or remove. `#[non_exhaustive]` lets the enum grow without breaking
+/// downstream `match` statements; pinned discriminants additionally let
+/// the format round-trip through any byte-stable serialization
+/// (config files, capability blobs, IPC, on-disk caches) without losing
+/// meaning across crate versions, and prevent inserts in the middle of
+/// the enum from shifting every later variant's number (which
+/// cargo-semver-checks rightly flags as a breaking change).
+///
 /// The first six variants (`Yuv420P` through `Gray8`) are the original
-/// formats produced by the early codec crates. Everything beyond that is
-/// additional surface handled by `oxideav-pixfmt` and the still-image
-/// codecs (PNG, GIF, still-JPEG). The enum is `#[non_exhaustive]` so new
-/// variants can land without breaking downstream crates — consumers that
-/// match must include a wildcard arm.
+/// formats produced by the early codec crates. Everything beyond that
+/// is additional surface handled by `oxideav-pixfmt` and the still-image
+/// codecs (PNG, GIF, still-JPEG).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[repr(u16)]
 pub enum PixelFormat {
     /// 8-bit YUV 4:2:0, planar (Y, U, V).
-    Yuv420P,
+    Yuv420P = 0,
     /// 8-bit YUV 4:2:2, planar.
-    Yuv422P,
+    Yuv422P = 1,
     /// 8-bit YUV 4:4:4, planar.
-    Yuv444P,
+    Yuv444P = 2,
     /// Packed 8-bit RGB, 3 bytes/pixel.
-    Rgb24,
+    Rgb24 = 3,
     /// Packed 8-bit RGBA, 4 bytes/pixel.
-    Rgba,
+    Rgba = 4,
     /// Packed 8-bit grayscale.
-    Gray8,
+    Gray8 = 5,
 
     // --- Palette ---
     /// 8-bit palette indices — companion palette carried out of band.
-    Pal8,
+    Pal8 = 6,
 
     // --- Packed RGB/BGR swizzles ---
     /// Packed 8-bit BGR, 3 bytes/pixel.
-    Bgr24,
+    Bgr24 = 7,
     /// Packed 8-bit BGRA, 4 bytes/pixel.
-    Bgra,
+    Bgra = 8,
     /// Packed 8-bit ARGB, 4 bytes/pixel (alpha first).
-    Argb,
+    Argb = 9,
     /// Packed 8-bit ABGR, 4 bytes/pixel.
-    Abgr,
+    Abgr = 10,
 
     // --- Deeper packed RGB ---
     /// Packed 16-bit-per-channel RGB, little-endian, 6 bytes/pixel.
-    Rgb48Le,
+    Rgb48Le = 11,
     /// Packed 16-bit-per-channel RGBA, little-endian, 8 bytes/pixel.
-    Rgba64Le,
+    Rgba64Le = 12,
 
     // --- Grayscale deeper / partial bit depths ---
     /// 16-bit little-endian grayscale.
-    Gray16Le,
+    Gray16Le = 13,
     /// 10-bit grayscale in a 16-bit little-endian word.
-    Gray10Le,
+    Gray10Le = 14,
     /// 12-bit grayscale in a 16-bit little-endian word.
-    Gray12Le,
+    Gray12Le = 15,
 
     // --- Higher-precision YUV ---
     /// 10-bit YUV 4:2:0 planar, little-endian 16-bit storage.
-    Yuv420P10Le,
+    Yuv420P10Le = 16,
     /// 10-bit YUV 4:2:2 planar, little-endian 16-bit storage.
-    Yuv422P10Le,
+    Yuv422P10Le = 17,
     /// 10-bit YUV 4:4:4 planar, little-endian 16-bit storage.
-    Yuv444P10Le,
+    Yuv444P10Le = 18,
     /// 12-bit YUV 4:2:0 planar, little-endian 16-bit storage.
-    Yuv420P12Le,
+    Yuv420P12Le = 19,
     /// 12-bit YUV 4:2:2 planar, little-endian 16-bit storage.
-    Yuv422P12Le,
+    Yuv422P12Le = 20,
     /// 12-bit YUV 4:4:4 planar, little-endian 16-bit storage.
-    Yuv444P12Le,
+    Yuv444P12Le = 21,
 
     // --- Full-range ("J") YUV ---
     /// JPEG/full-range YUV 4:2:0 planar.
-    YuvJ420P,
+    YuvJ420P = 22,
     /// JPEG/full-range YUV 4:2:2 planar.
-    YuvJ422P,
+    YuvJ422P = 23,
     /// JPEG/full-range YUV 4:4:4 planar.
-    YuvJ444P,
+    YuvJ444P = 24,
 
     // --- Semi-planar YUV ---
     /// YUV 4:2:0, planar Y + interleaved UV (NV12).
-    Nv12,
+    Nv12 = 25,
     /// YUV 4:2:0, planar Y + interleaved VU (NV21).
-    Nv21,
+    Nv21 = 26,
 
     // --- Gray + alpha / YUV + alpha ---
     /// Packed grayscale + alpha, 2 bytes/pixel (Y, A).
-    Ya8,
+    Ya8 = 27,
     /// Yuv420P with an additional full-resolution alpha plane.
-    Yuva420P,
+    Yuva420P = 28,
 
     // --- Mono (1 bit per pixel) ---
     /// 1 bit per pixel, packed MSB-first, 0 = black.
-    MonoBlack,
+    MonoBlack = 29,
     /// 1 bit per pixel, packed MSB-first, 0 = white.
-    MonoWhite,
+    MonoWhite = 30,
 
     // --- Interleaved YUV 4:2:2 ---
     /// Packed 4:2:2, byte order Y0 U0 Y1 V0.
-    Yuyv422,
+    Yuyv422 = 31,
     /// Packed 4:2:2, byte order U0 Y0 V0 Y1.
-    Uyvy422,
+    Uyvy422 = 32,
 
     // --- Print / prepress ---
     /// Packed 8-bit CMYK, 4 bytes/pixel in byte order C, M, Y, K.
@@ -509,7 +530,7 @@ pub enum PixelFormat {
     /// and by many print-side image toolchains. Adobe Photoshop's
     /// inverted CMYK (where 0 = full ink) is a separate variant reserved
     /// for a future `CmykInverted`.
-    Cmyk,
+    Cmyk = 33,
 }
 
 impl PixelFormat {
@@ -609,6 +630,65 @@ impl PixelFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pin every `PixelFormat` and `SampleFormat` discriminant. This is the
+    /// stability commitment — the integer value of each variant is part of
+    /// the public ABI. Any reorder, renumber, or removal will fail this test
+    /// and the change MUST be a major version bump (or a fresh variant
+    /// appended at a new number, leaving the existing ones untouched).
+    #[test]
+    fn pixel_format_discriminants_pinned() {
+        assert_eq!(PixelFormat::Yuv420P as u16, 0);
+        assert_eq!(PixelFormat::Yuv422P as u16, 1);
+        assert_eq!(PixelFormat::Yuv444P as u16, 2);
+        assert_eq!(PixelFormat::Rgb24 as u16, 3);
+        assert_eq!(PixelFormat::Rgba as u16, 4);
+        assert_eq!(PixelFormat::Gray8 as u16, 5);
+        assert_eq!(PixelFormat::Pal8 as u16, 6);
+        assert_eq!(PixelFormat::Bgr24 as u16, 7);
+        assert_eq!(PixelFormat::Bgra as u16, 8);
+        assert_eq!(PixelFormat::Argb as u16, 9);
+        assert_eq!(PixelFormat::Abgr as u16, 10);
+        assert_eq!(PixelFormat::Rgb48Le as u16, 11);
+        assert_eq!(PixelFormat::Rgba64Le as u16, 12);
+        assert_eq!(PixelFormat::Gray16Le as u16, 13);
+        assert_eq!(PixelFormat::Gray10Le as u16, 14);
+        assert_eq!(PixelFormat::Gray12Le as u16, 15);
+        assert_eq!(PixelFormat::Yuv420P10Le as u16, 16);
+        assert_eq!(PixelFormat::Yuv422P10Le as u16, 17);
+        assert_eq!(PixelFormat::Yuv444P10Le as u16, 18);
+        assert_eq!(PixelFormat::Yuv420P12Le as u16, 19);
+        assert_eq!(PixelFormat::Yuv422P12Le as u16, 20);
+        assert_eq!(PixelFormat::Yuv444P12Le as u16, 21);
+        assert_eq!(PixelFormat::YuvJ420P as u16, 22);
+        assert_eq!(PixelFormat::YuvJ422P as u16, 23);
+        assert_eq!(PixelFormat::YuvJ444P as u16, 24);
+        assert_eq!(PixelFormat::Nv12 as u16, 25);
+        assert_eq!(PixelFormat::Nv21 as u16, 26);
+        assert_eq!(PixelFormat::Ya8 as u16, 27);
+        assert_eq!(PixelFormat::Yuva420P as u16, 28);
+        assert_eq!(PixelFormat::MonoBlack as u16, 29);
+        assert_eq!(PixelFormat::MonoWhite as u16, 30);
+        assert_eq!(PixelFormat::Yuyv422 as u16, 31);
+        assert_eq!(PixelFormat::Uyvy422 as u16, 32);
+        assert_eq!(PixelFormat::Cmyk as u16, 33);
+    }
+
+    #[test]
+    fn sample_format_discriminants_pinned() {
+        assert_eq!(SampleFormat::U8 as u8, 0);
+        assert_eq!(SampleFormat::S8 as u8, 1);
+        assert_eq!(SampleFormat::S16 as u8, 2);
+        assert_eq!(SampleFormat::S24 as u8, 3);
+        assert_eq!(SampleFormat::S32 as u8, 4);
+        assert_eq!(SampleFormat::F32 as u8, 5);
+        assert_eq!(SampleFormat::F64 as u8, 6);
+        assert_eq!(SampleFormat::U8P as u8, 7);
+        assert_eq!(SampleFormat::S16P as u8, 8);
+        assert_eq!(SampleFormat::S32P as u8, 9);
+        assert_eq!(SampleFormat::F32P as u8, 10);
+        assert_eq!(SampleFormat::F64P as u8, 11);
+    }
 
     #[test]
     fn high_bit_yuv_planar_metadata() {
