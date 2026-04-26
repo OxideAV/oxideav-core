@@ -26,7 +26,9 @@ pub use capabilities::{CodecCapabilities, CodecPreferences, DEFAULT_PRIORITY};
 pub use error::{Error, Result};
 pub use execution::ExecutionContext;
 pub use filter::{FilterContext, PortParams, PortSpec, StreamFilter};
-pub use format::{MediaType, PixelFormat, SampleFormat};
+pub use format::{
+    ChannelLayout, ChannelPosition, MediaType, ParseChannelLayoutError, PixelFormat, SampleFormat,
+};
 pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
 pub use options::{
     parse_options, CodecOptions, CodecOptionsStruct, OptionField, OptionKind, OptionValue,

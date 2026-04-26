@@ -1,4 +1,8 @@
 //! Media-type and sample/pixel format enumerations.
+//!
+//! Audio channel ordering follows SMPTE 2036-2 / ITU-R BS.775 conventions
+//! for surround layouts; per-channel positions are named with the
+//! WAVEFORMATEXTENSIBLE / FFmpeg "front-left, front-right, …" vocabulary.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MediaType {
@@ -7,6 +11,336 @@ pub enum MediaType {
     Subtitle,
     Data,
     Unknown,
+}
+
+/// A single speaker position within a multi-channel audio layout.
+///
+/// Names follow the WAVEFORMATEXTENSIBLE / FFmpeg / SMPTE convention.
+/// `Side*` and `Back*` are kept distinct (mirroring 7.1's
+/// L/R + Ls/Rs + Lb/Rb separation) so codecs that surface the
+/// distinction don't collapse it. `Lr`/`Rr` (rear / back-rear) are aliases
+/// for `BackLeft`/`BackRight` in this taxonomy — the rear pair sits behind
+/// the listener on the room's centreline-extension, the side pair is at
+/// roughly ±90° from front. The enum is `#[non_exhaustive]` so additional
+/// positions (height channels for Atmos / Auro-3D, etc.) can be added
+/// without breaking downstream match arms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ChannelPosition {
+    /// Front-left (L). 30° left of centre in BS.775 listening geometry.
+    FrontLeft,
+    /// Front-right (R). 30° right of centre.
+    FrontRight,
+    /// Front-centre (C). Direct centre, 0°.
+    FrontCenter,
+    /// Low-frequency effects (LFE). Sub-bass, no positional meaning.
+    LowFrequency,
+    /// Back-left (Lb / Lr). Behind the listener, ±150° in 7.1.
+    BackLeft,
+    /// Back-right (Rb / Rr). Behind the listener, mirror of `BackLeft`.
+    BackRight,
+    /// Front left-of-centre (Lc). Used in cinema 7.1 SDDS layouts.
+    FrontLeftOfCenter,
+    /// Front right-of-centre (Rc). Mirror of `FrontLeftOfCenter`.
+    FrontRightOfCenter,
+    /// Back-centre (Cs). Single rear channel for 6.1 / BS.775 4.0.
+    BackCenter,
+    /// Side-left (Ls). ±90° on the listener's left in 5.1 / 7.1.
+    SideLeft,
+    /// Side-right (Rs). Mirror of `SideLeft`.
+    SideRight,
+    /// Top front-left. Atmos / Auro-3D height layer (placeholder).
+    TopFrontLeft,
+    /// Top front-right. Atmos / Auro-3D height layer (placeholder).
+    TopFrontRight,
+    /// Top back-left. Atmos / Auro-3D ceiling layer (placeholder).
+    TopBackLeft,
+    /// Top back-right. Atmos / Auro-3D ceiling layer (placeholder).
+    TopBackRight,
+}
+
+/// Audio channel layout — names a fixed ordered tuple of speaker
+/// positions, OR carries a discrete fallback count when the layout is
+/// unknown / non-standard.
+///
+/// Channel orderings are taken from ITU-R BS.775 (5.1 / 7.1 surround
+/// reference) and SMPTE ST 2036-2 (audio channel ordering for UHDTV).
+/// For 5.1 the canonical order this crate adopts is
+/// `L, R, C, LFE, Ls, Rs` (the WAVEFORMATEXTENSIBLE / Vorbis / Opus
+/// convention). 7.1 extends that with `Lb, Rb` (back-rear pair).
+///
+/// The `Stereo` variant covers both regular two-channel stereo and the
+/// AC-3 / AC-4 matrix-encoded downmix carriers `Lo/Ro` ("two of",
+/// downmix-compatible) and `Lt/Rt` ("matrix-encoded for Pro Logic
+/// extraction"); the dedicated [`LoRo`] / [`LtRt`] variants surface the
+/// distinction explicitly when a downstream filter or muxer needs it.
+///
+/// `DiscreteN(n)` is the catch-all for "we know there are `n` channels
+/// but no recognised layout" — used when a codec produces an unusual
+/// channel count (>8) or when the container failed to surface a layout
+/// flag. It is the only variant whose `position()` returns `None`.
+///
+/// Marked `#[non_exhaustive]` so additional standard layouts (Atmos
+/// 7.1.4, Auro-3D 9.1, …) can be added without breaking match-exhaustive
+/// downstream consumers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ChannelLayout {
+    /// Mono (1ch): C.
+    Mono,
+    /// Stereo (2ch): L, R.
+    Stereo,
+    /// 2.1 (3ch): L, R, LFE.
+    Stereo21,
+    /// 3.0 surround (3ch): L, R, C.
+    Surround30,
+    /// Quadraphonic (4ch): L, R, Ls, Rs — no centre, side surrounds.
+    Quad,
+    /// 4.0 surround per BS.775 (4ch): L, R, C, Cs — centre + back surround.
+    Surround40,
+    /// 4.1 surround (5ch): L, R, C, Cs, LFE.
+    Surround41,
+    /// 5.0 surround (5ch): L, R, C, Ls, Rs.
+    Surround50,
+    /// 5.1 surround (6ch): L, R, C, LFE, Ls, Rs.
+    Surround51,
+    /// 6.0 surround (6ch): L, R, C, Cs, Ls, Rs.
+    Surround60,
+    /// 6.1 surround (7ch): L, R, C, LFE, Cs, Ls, Rs.
+    Surround61,
+    /// 7.0 surround (7ch): L, R, C, Ls, Rs, Lb, Rb.
+    Surround70,
+    /// 7.1 surround (8ch): L, R, C, LFE, Ls, Rs, Lb, Rb.
+    Surround71,
+    /// AC-3 / AC-4 Lo/Ro stereo downmix (2ch). Two-channel mix preserving
+    /// downmix-compatibility coefficients; not matrix-encoded.
+    LoRo,
+    /// AC-3 / AC-4 Lt/Rt stereo downmix (2ch). Two-channel matrix-encoded
+    /// downmix carrying surround information for Dolby Pro Logic decoding.
+    LtRt,
+    /// Discrete fallback: `n` channels with no recognised layout. Used for
+    /// unusual / >8ch / unknown layouts surfaced by exotic codecs or
+    /// containers that drop layout flags.
+    DiscreteN(u16),
+}
+
+impl ChannelLayout {
+    /// Number of channels in this layout.
+    pub fn channel_count(&self) -> u16 {
+        match self {
+            Self::Mono => 1,
+            Self::Stereo | Self::LoRo | Self::LtRt => 2,
+            Self::Stereo21 | Self::Surround30 => 3,
+            Self::Quad | Self::Surround40 => 4,
+            Self::Surround41 | Self::Surround50 => 5,
+            Self::Surround51 | Self::Surround60 => 6,
+            Self::Surround61 | Self::Surround70 => 7,
+            Self::Surround71 => 8,
+            Self::DiscreteN(n) => *n,
+        }
+    }
+
+    /// Speaker positions in canonical order. Returns an empty slice for
+    /// `DiscreteN` since the layout is unknown — call [`positions_owned`]
+    /// to get a `Vec` if you need to enumerate slots regardless of
+    /// known/unknown status.
+    ///
+    /// [`positions_owned`]: Self::positions_owned
+    pub fn positions(&self) -> &'static [ChannelPosition] {
+        use ChannelPosition::*;
+        match self {
+            Self::Mono => &[FrontCenter],
+            Self::Stereo | Self::LoRo | Self::LtRt => &[FrontLeft, FrontRight],
+            Self::Stereo21 => &[FrontLeft, FrontRight, LowFrequency],
+            Self::Surround30 => &[FrontLeft, FrontRight, FrontCenter],
+            Self::Quad => &[FrontLeft, FrontRight, SideLeft, SideRight],
+            Self::Surround40 => &[FrontLeft, FrontRight, FrontCenter, BackCenter],
+            Self::Surround41 => &[FrontLeft, FrontRight, FrontCenter, BackCenter, LowFrequency],
+            Self::Surround50 => &[FrontLeft, FrontRight, FrontCenter, SideLeft, SideRight],
+            Self::Surround51 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+            ],
+            Self::Surround60 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                BackCenter,
+                SideLeft,
+                SideRight,
+            ],
+            Self::Surround61 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                BackCenter,
+                SideLeft,
+                SideRight,
+            ],
+            Self::Surround70 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+            ],
+            Self::Surround71 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+            ],
+            Self::DiscreteN(_) => &[],
+        }
+    }
+
+    /// Owned position list. For known layouts this clones [`positions`];
+    /// for `DiscreteN(n)` it returns an empty `Vec` (positions remain
+    /// unknown). Provided so callers that just want "give me positions
+    /// for any layout" don't have to special-case the discrete arm.
+    ///
+    /// [`positions`]: Self::positions
+    pub fn positions_owned(&self) -> Vec<ChannelPosition> {
+        self.positions().to_vec()
+    }
+
+    /// Speaker position at slot `idx` in canonical order, or `None` for
+    /// out-of-range slots and for `DiscreteN` (where the layout is
+    /// unknown).
+    pub fn position(&self, idx: usize) -> Option<ChannelPosition> {
+        self.positions().get(idx).copied()
+    }
+
+    /// True when this layout carries a low-frequency-effects (LFE) channel.
+    pub fn has_lfe(&self) -> bool {
+        self.positions()
+            .iter()
+            .any(|p| matches!(p, ChannelPosition::LowFrequency))
+    }
+
+    /// True when this layout carries surround information (more than two
+    /// channels OR an LFE). `Stereo` / `Mono` return false; `LoRo` /
+    /// `LtRt` are 2-channel downmixes and also return false even though
+    /// they encode surround content (that's the whole point of a
+    /// downmix).
+    pub fn is_surround(&self) -> bool {
+        self.channel_count() > 2 || self.has_lfe()
+    }
+
+    /// Back-compat bridge: infer a layout from a bare channel count.
+    ///
+    /// This mapping is what lets codecs that haven't been updated to set
+    /// a layout explicitly continue to work: they keep producing a count
+    /// and we infer the most-common layout for that count. The choices
+    /// follow industry defaults — 5.1 wins for 6ch (more common than
+    /// 6.0), 7.1 wins for 8ch, and so on.
+    ///
+    /// | count | layout       |
+    /// |-------|--------------|
+    /// | 1     | `Mono`       |
+    /// | 2     | `Stereo`     |
+    /// | 3     | `Surround30` |
+    /// | 4     | `Quad`       |
+    /// | 5     | `Surround50` |
+    /// | 6     | `Surround51` |
+    /// | 7     | `Surround61` |
+    /// | 8     | `Surround71` |
+    /// | other | `DiscreteN`  |
+    pub fn from_count(n: u16) -> ChannelLayout {
+        match n {
+            1 => Self::Mono,
+            2 => Self::Stereo,
+            3 => Self::Surround30,
+            4 => Self::Quad,
+            5 => Self::Surround50,
+            6 => Self::Surround51,
+            7 => Self::Surround61,
+            8 => Self::Surround71,
+            other => Self::DiscreteN(other),
+        }
+    }
+}
+
+impl std::fmt::Display for ChannelLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Mono => "mono",
+            Self::Stereo => "stereo",
+            Self::Stereo21 => "2.1",
+            Self::Surround30 => "3.0",
+            Self::Quad => "quad",
+            Self::Surround40 => "4.0",
+            Self::Surround41 => "4.1",
+            Self::Surround50 => "5.0",
+            Self::Surround51 => "5.1",
+            Self::Surround60 => "6.0",
+            Self::Surround61 => "6.1",
+            Self::Surround70 => "7.0",
+            Self::Surround71 => "7.1",
+            Self::LoRo => "loro",
+            Self::LtRt => "ltrt",
+            Self::DiscreteN(n) => return write!(f, "discrete{n}"),
+        };
+        f.write_str(s)
+    }
+}
+
+/// Error returned by the [`ChannelLayout`] `FromStr` impl when the input
+/// doesn't match any recognised layout name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseChannelLayoutError(pub String);
+
+impl std::fmt::Display for ParseChannelLayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unrecognised channel layout: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseChannelLayoutError {}
+
+impl std::str::FromStr for ChannelLayout {
+    type Err = ParseChannelLayoutError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let lower = s.trim().to_ascii_lowercase();
+        let layout = match lower.as_str() {
+            "mono" | "1.0" => Self::Mono,
+            "stereo" | "2.0" => Self::Stereo,
+            "2.1" => Self::Stereo21,
+            "3.0" | "surround3" | "surround30" => Self::Surround30,
+            "quad" => Self::Quad,
+            "4.0" | "surround4" | "surround40" => Self::Surround40,
+            "4.1" | "surround41" => Self::Surround41,
+            "5.0" | "surround5" | "surround50" => Self::Surround50,
+            "5.1" | "surround51" => Self::Surround51,
+            "6.0" | "surround6" | "surround60" => Self::Surround60,
+            "6.1" | "surround61" => Self::Surround61,
+            "7.0" | "surround7" | "surround70" => Self::Surround70,
+            "7.1" | "surround71" => Self::Surround71,
+            "loro" | "lo/ro" => Self::LoRo,
+            "ltrt" | "lt/rt" => Self::LtRt,
+            other => {
+                if let Some(rest) = other.strip_prefix("discrete") {
+                    if let Ok(n) = rest.parse::<u16>() {
+                        return Ok(Self::DiscreteN(n));
+                    }
+                }
+                return Err(ParseChannelLayoutError(s.to_owned()));
+            }
+        };
+        Ok(layout)
+    }
 }
 
 /// Audio sample format.
@@ -285,6 +619,160 @@ mod tests {
         assert!(!PixelFormat::Yuv444P12Le.has_alpha());
         assert!(!PixelFormat::Yuv422P12Le.is_palette());
         assert!(!PixelFormat::Yuv444P12Le.is_palette());
+    }
+
+    #[test]
+    fn channel_layout_round_trip_count_for_known_layouts() {
+        // For every `n` that `from_count` maps to a named layout, the
+        // resulting layout's `channel_count()` must equal `n` again.
+        for n in 1..=8u16 {
+            let layout = ChannelLayout::from_count(n);
+            assert_eq!(layout.channel_count(), n, "round-trip failed for n={n}");
+            // None of these defaults should fall through to DiscreteN.
+            assert!(
+                !matches!(layout, ChannelLayout::DiscreteN(_)),
+                "from_count({n}) unexpectedly produced DiscreteN"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_layout_from_count_default_table() {
+        // The exact mapping documented on `from_count` — pin it so
+        // future refactors don't silently change the inferred layout.
+        assert_eq!(ChannelLayout::from_count(1), ChannelLayout::Mono);
+        assert_eq!(ChannelLayout::from_count(2), ChannelLayout::Stereo);
+        assert_eq!(ChannelLayout::from_count(3), ChannelLayout::Surround30);
+        assert_eq!(ChannelLayout::from_count(4), ChannelLayout::Quad);
+        assert_eq!(ChannelLayout::from_count(5), ChannelLayout::Surround50);
+        assert_eq!(ChannelLayout::from_count(6), ChannelLayout::Surround51);
+        assert_eq!(ChannelLayout::from_count(7), ChannelLayout::Surround61);
+        assert_eq!(ChannelLayout::from_count(8), ChannelLayout::Surround71);
+    }
+
+    #[test]
+    fn channel_layout_unknown_count_falls_through_to_discrete() {
+        assert_eq!(ChannelLayout::from_count(0), ChannelLayout::DiscreteN(0));
+        assert_eq!(ChannelLayout::from_count(13), ChannelLayout::DiscreteN(13));
+        assert_eq!(
+            ChannelLayout::from_count(64).channel_count(),
+            64,
+            "DiscreteN must report the count it was constructed with"
+        );
+    }
+
+    #[test]
+    fn channel_layout_position_lookup() {
+        assert_eq!(
+            ChannelLayout::Stereo.position(0),
+            Some(ChannelPosition::FrontLeft)
+        );
+        assert_eq!(
+            ChannelLayout::Stereo.position(1),
+            Some(ChannelPosition::FrontRight)
+        );
+        assert_eq!(ChannelLayout::Stereo.position(2), None);
+
+        // 5.1 canonical: L, R, C, LFE, Ls, Rs.
+        let s51 = ChannelLayout::Surround51;
+        assert_eq!(s51.position(0), Some(ChannelPosition::FrontLeft));
+        assert_eq!(s51.position(1), Some(ChannelPosition::FrontRight));
+        assert_eq!(s51.position(2), Some(ChannelPosition::FrontCenter));
+        assert_eq!(s51.position(3), Some(ChannelPosition::LowFrequency));
+        assert_eq!(s51.position(4), Some(ChannelPosition::SideLeft));
+        assert_eq!(s51.position(5), Some(ChannelPosition::SideRight));
+        assert_eq!(s51.position(6), None);
+
+        // DiscreteN never reveals a position.
+        assert_eq!(ChannelLayout::DiscreteN(13).position(0), None);
+    }
+
+    #[test]
+    fn channel_layout_lfe_and_surround_predicates() {
+        assert!(ChannelLayout::Surround51.has_lfe());
+        assert!(ChannelLayout::Surround71.has_lfe());
+        assert!(ChannelLayout::Stereo21.has_lfe());
+        assert!(!ChannelLayout::Quad.has_lfe());
+        assert!(!ChannelLayout::Surround50.has_lfe());
+        assert!(!ChannelLayout::Stereo.has_lfe());
+
+        assert!(!ChannelLayout::Mono.is_surround());
+        assert!(!ChannelLayout::Stereo.is_surround());
+        // Downmix carriers are still 2ch / no-LFE → not "surround" by
+        // the layout-shape definition; the surround info lives in the
+        // sample matrix itself.
+        assert!(!ChannelLayout::LoRo.is_surround());
+        assert!(!ChannelLayout::LtRt.is_surround());
+        assert!(ChannelLayout::Stereo21.is_surround());
+        assert!(ChannelLayout::Surround51.is_surround());
+        assert!(ChannelLayout::Surround71.is_surround());
+    }
+
+    #[test]
+    fn channel_layout_display_and_fromstr_round_trip() {
+        use std::str::FromStr;
+        let cases = [
+            ChannelLayout::Mono,
+            ChannelLayout::Stereo,
+            ChannelLayout::Stereo21,
+            ChannelLayout::Surround30,
+            ChannelLayout::Quad,
+            ChannelLayout::Surround40,
+            ChannelLayout::Surround41,
+            ChannelLayout::Surround50,
+            ChannelLayout::Surround51,
+            ChannelLayout::Surround60,
+            ChannelLayout::Surround61,
+            ChannelLayout::Surround70,
+            ChannelLayout::Surround71,
+            ChannelLayout::LoRo,
+            ChannelLayout::LtRt,
+            ChannelLayout::DiscreteN(13),
+        ];
+        for layout in cases {
+            let s = layout.to_string();
+            let parsed = ChannelLayout::from_str(&s).expect("display output must parse back");
+            assert_eq!(parsed, layout, "round-trip failed via {s:?}");
+        }
+    }
+
+    #[test]
+    fn channel_layout_fromstr_accepts_aliases_and_case() {
+        use std::str::FromStr;
+        assert_eq!(
+            ChannelLayout::from_str("STEREO").unwrap(),
+            ChannelLayout::Stereo
+        );
+        assert_eq!(
+            ChannelLayout::from_str("2.0").unwrap(),
+            ChannelLayout::Stereo
+        );
+        assert_eq!(
+            ChannelLayout::from_str("5.1").unwrap(),
+            ChannelLayout::Surround51
+        );
+        assert_eq!(
+            ChannelLayout::from_str("Lo/Ro").unwrap(),
+            ChannelLayout::LoRo
+        );
+        assert_eq!(
+            ChannelLayout::from_str("lt/rt").unwrap(),
+            ChannelLayout::LtRt
+        );
+        assert!(ChannelLayout::from_str("absurd_layout").is_err());
+    }
+
+    #[test]
+    fn channel_layout_positions_owned_matches_static_slice() {
+        for layout in [
+            ChannelLayout::Mono,
+            ChannelLayout::Surround51,
+            ChannelLayout::Surround71,
+        ] {
+            assert_eq!(layout.positions_owned(), layout.positions());
+        }
+        // DiscreteN returns an empty owned vec — positions are unknown.
+        assert!(ChannelLayout::DiscreteN(7).positions_owned().is_empty());
     }
 
     #[test]

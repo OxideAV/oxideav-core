@@ -1,6 +1,6 @@
 //! Stream metadata shared between containers and codecs.
 
-use crate::format::{MediaType, PixelFormat, SampleFormat};
+use crate::format::{ChannelLayout, MediaType, PixelFormat, SampleFormat};
 use crate::options::CodecOptions;
 use crate::rational::Rational;
 use crate::time::TimeBase;
@@ -265,6 +265,12 @@ pub struct CodecParameters {
     pub sample_rate: Option<u32>,
     pub channels: Option<u16>,
     pub sample_format: Option<SampleFormat>,
+    /// Speaker layout for the audio stream. Optional and additive
+    /// alongside [`channels`](Self::channels): a codec/container that
+    /// only knows the count can leave this `None` and consumers will
+    /// fall back to [`ChannelLayout::from_count`]. When both are set,
+    /// they must agree on channel count — see [`Self::resolved_layout`].
+    pub channel_layout: Option<ChannelLayout>,
 
     // Video-specific
     pub width: Option<u32>,
@@ -293,6 +299,7 @@ impl CodecParameters {
             sample_rate: None,
             channels: None,
             sample_format: None,
+            channel_layout: None,
             width: None,
             height: None,
             pixel_format: None,
@@ -307,7 +314,10 @@ impl CodecParameters {
     /// format parameters (sample_rate/channels/sample_format for audio,
     /// width/height/pixel_format for video). Extradata and bitrate
     /// differences are tolerated — many containers rewrite extradata
-    /// losslessly during a copy operation.
+    /// losslessly during a copy operation. `channel_layout` is compared
+    /// only via the channel count (through [`Self::resolved_layout`]) so
+    /// a stream that surfaces an explicit layout still matches a
+    /// count-only stream of the same width.
     pub fn matches_core(&self, other: &CodecParameters) -> bool {
         self.codec_id == other.codec_id
             && self.sample_rate == other.sample_rate
@@ -325,6 +335,7 @@ impl CodecParameters {
             sample_rate: None,
             channels: None,
             sample_format: None,
+            channel_layout: None,
             width: None,
             height: None,
             pixel_format: None,
@@ -346,6 +357,7 @@ impl CodecParameters {
             sample_rate: None,
             channels: None,
             sample_format: None,
+            channel_layout: None,
             width: None,
             height: None,
             pixel_format: None,
@@ -366,6 +378,7 @@ impl CodecParameters {
             sample_rate: None,
             channels: None,
             sample_format: None,
+            channel_layout: None,
             width: None,
             height: None,
             pixel_format: None,
@@ -374,6 +387,45 @@ impl CodecParameters {
             bit_rate: None,
             options: CodecOptions::default(),
         }
+    }
+
+    /// Builder method: set the channel count.
+    ///
+    /// Pairs with [`Self::channel_layout`] for the layout. The two are
+    /// kept as independent fields so a codec that only knows one or the
+    /// other can populate just the field it has; [`Self::resolved_layout`]
+    /// derives a layout from whatever is set.
+    pub fn channels(mut self, n: u16) -> Self {
+        self.channels = Some(n);
+        self
+    }
+
+    /// Builder method: set the channel layout. Mirrors
+    /// [`Self::channels`]; setting one does not auto-fill the other —
+    /// use [`Self::resolved_layout`] / [`Self::resolved_channels`] at
+    /// read time to bridge the two.
+    pub fn channel_layout(mut self, layout: ChannelLayout) -> Self {
+        self.channel_layout = Some(layout);
+        self
+    }
+
+    /// Best-effort layout: prefers an explicit [`Self::channel_layout`]
+    /// when set, otherwise infers one from [`Self::channels`] via
+    /// [`ChannelLayout::from_count`]. Returns `None` only when neither
+    /// field is populated (e.g. video / data streams, or audio params
+    /// surfaced before the codec has been opened).
+    pub fn resolved_layout(&self) -> Option<ChannelLayout> {
+        self.channel_layout
+            .or_else(|| self.channels.map(ChannelLayout::from_count))
+    }
+
+    /// Best-effort channel count: prefers an explicit
+    /// [`Self::channels`] when set, otherwise reads the count off
+    /// [`Self::channel_layout`]. Returns `None` only when neither
+    /// field is populated.
+    pub fn resolved_channels(&self) -> Option<u16> {
+        self.channels
+            .or_else(|| self.channel_layout.map(|l| l.channel_count()))
     }
 }
 
@@ -463,5 +515,48 @@ mod codec_tag_tests {
         assert_eq!(ctx.sample_rate, Some(48_000));
         assert_eq!(ctx.header.unwrap(), &[1, 2, 3]);
         assert_eq!(ctx.packet.unwrap(), &[4, 5]);
+    }
+}
+
+#[cfg(test)]
+mod channel_layout_plumbing_tests {
+    use super::*;
+
+    #[test]
+    fn audio_params_default_to_no_layout() {
+        let p = CodecParameters::audio(CodecId::new("pcm_s16le"));
+        assert!(p.channel_layout.is_none());
+        assert!(p.channels.is_none());
+        assert!(p.resolved_layout().is_none());
+        assert!(p.resolved_channels().is_none());
+    }
+
+    #[test]
+    fn channels_only_infers_layout_via_from_count() {
+        let p = CodecParameters::audio(CodecId::new("pcm_s16le")).channels(6);
+        assert_eq!(p.channels, Some(6));
+        assert!(p.channel_layout.is_none());
+        assert_eq!(p.resolved_layout(), Some(ChannelLayout::Surround51));
+        assert_eq!(p.resolved_channels(), Some(6));
+    }
+
+    #[test]
+    fn explicit_layout_wins_over_count() {
+        let p = CodecParameters::audio(CodecId::new("ac3"))
+            .channels(6)
+            .channel_layout(ChannelLayout::Surround60);
+        // 6ch by-count would default to Surround51, but the explicit
+        // layout overrides.
+        assert_eq!(p.resolved_layout(), Some(ChannelLayout::Surround60));
+        assert_eq!(p.resolved_channels(), Some(6));
+    }
+
+    #[test]
+    fn layout_only_yields_count_via_resolved_channels() {
+        let p =
+            CodecParameters::audio(CodecId::new("ac3")).channel_layout(ChannelLayout::Surround71);
+        assert!(p.channels.is_none());
+        assert_eq!(p.resolved_channels(), Some(8));
+        assert_eq!(p.resolved_layout(), Some(ChannelLayout::Surround71));
     }
 }
