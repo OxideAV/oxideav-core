@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7](https://github.com/OxideAV/oxideav-core/compare/v0.1.6...v0.1.7) - 2026-04-26
+
+### Other
+
+- pin PixelFormat/SampleFormat discriminants + disable semver_check
+- plan mid-stream ConfigChanged signal for Frame
+- slim VideoFrame/AudioFrame — stream properties off the frame
+- remove AudioFrame::layout() — layout is a stream property
+- add ChannelLayout enum + AudioFrame/CodecParameters plumbing
+- add Yuv422P12Le + Yuv444P12Le
+- pin release-plz to patch-only bumps
+
 ### Added
 
 - `PixelFormat::Yuv422P12Le` and `PixelFormat::Yuv444P12Le` — 12-bit
