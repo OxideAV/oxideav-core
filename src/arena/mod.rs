@@ -30,13 +30,14 @@
 //!   with what a `bumpalo`-backed implementation would look like, so
 //!   swapping later is a contained refactor.
 //!
-//! - **`Rc` for `Frame`, not `Arc`.** Round 1 targets the
+//! - **`Rc` for `Frame`, not `Arc`.** This module targets the
 //!   single-threaded decode path (one decoder, one consumer thread).
 //!   The bump-pointer cursor is `Cell<usize>` for the same reason
-//!   (no atomics on the hot path). When the parallel-decoder path
-//!   needs it, a sibling `arena_sync` module (or feature-gated
-//!   `Arc`/`AtomicUsize` variant) can be added without disturbing
-//!   this one — see the inline notes below.
+//!   (no atomics on the hot path). For the cross-thread decode path
+//!   — where a decoder produces frames on one thread and a consumer
+//!   reads them on another — see the sibling [`sync`] module, which
+//!   mirrors this API 1:1 with `Arc<FrameInner>` / atomic cursor so
+//!   `Frame: Send + Sync`.
 //!
 //! - **`Arena::alloc<T>` returns `&mut [T]` borrowed from the arena.**
 //!   The borrow is bounded by the lifetime of the `&Arena` reference,
@@ -44,6 +45,8 @@
 //!   held inside an `UnsafeCell` so multiple calls to `alloc` against
 //!   the same `&Arena` can each carve out non-overlapping sub-slices.
 //!   This matches `bumpalo::Bump::alloc_slice_*` semantics.
+
+pub mod sync;
 
 use std::cell::{Cell, UnsafeCell};
 use std::mem::{align_of, size_of};
@@ -70,8 +73,9 @@ use crate::format::PixelFormat;
 /// `ArenaPool` is `Send + Sync` (the inner `Mutex<Vec<…>>` makes it
 /// safe to share across threads even though [`Arena`] / [`Frame`]
 /// themselves are `!Send` due to their `Rc`/`Cell` contents). This
-/// asymmetry is intentional: a future parallel-decoder thread could
-/// share a single pool while each thread owns its own arenas.
+/// asymmetry is intentional: a parallel-decoder thread can share a
+/// single pool while each thread owns its own arenas — see also the
+/// sibling [`sync::ArenaPool`] whose leases are themselves `Send + Sync`.
 pub struct ArenaPool {
     inner: Mutex<PoolInner>,
     cap_per_arena: usize,
@@ -406,11 +410,10 @@ pub struct FrameInner {
 /// The arena and its buffer are released back to the pool when the
 /// last clone is dropped.
 ///
-/// `Frame` is currently `Rc<FrameInner>` (single-threaded decoder
-/// path). When the workspace gains a parallel-decoder thread the plan
-/// is to add a sibling `ArcFrame = Arc<FrameInner>` (or a feature-gated
-/// `arc_frame` variant of this module) — the public API of `Frame` is
-/// kept narrow on purpose to make that swap mechanical.
+/// `Frame` is `Rc<FrameInner>` (single-threaded decoder path). For the
+/// cross-thread decode path — where the consumer runs on a different
+/// thread from the decoder — use the sibling [`sync::Frame`] which is
+/// `Arc<sync::FrameInner>` and is `Send + Sync`.
 pub type Frame = Rc<FrameInner>;
 
 impl FrameInner {

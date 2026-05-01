@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9](https://github.com/OxideAV/oxideav-core/compare/v0.1.8...v0.1.9) - 2026-05-01
+
+### Added
+
+- New `crate::arena::sync` sibling module — `Send + Sync` mirror of
+  `crate::arena`. Same four-type API (`ArenaPool`, `Arena`, `Frame`,
+  `FrameInner`) with `Arena` backed by `AtomicUsize` / `AtomicU32`
+  instead of `Cell`, and `Frame = Arc<FrameInner>` instead of
+  `Rc<FrameInner>`. Built for the cross-thread decode path, where a
+  decoder produces frames on one worker and a consumer (renderer /
+  encoder / network sink) reads them on another. The `Rc` variant
+  remains the cheaper choice for same-thread decode/consume.
+- `arena::sync::Arena::alloc` uses a CAS loop on the cursor, so
+  concurrent allocators on the same `&Arena` receive disjoint slices.
+  The typical pattern is still alloc-then-freeze on the producer
+  thread; the CAS path exists so the `Sync` bound is sound rather
+  than as a perf-relevant feature.
+- `FrameHeader` and `MAX_PLANES` are re-exported from `arena::sync`,
+  so users of either module see the same metadata shape — there is
+  no thread-safety angle to either of them.
+
 ## [0.1.8](https://github.com/OxideAV/oxideav-core/compare/v0.1.7...v0.1.8) - 2026-05-01
 
 ### Other
