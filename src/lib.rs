@@ -6,6 +6,7 @@
 //! [`RuntimeContext`] bundles all four registries (codec / container /
 //! source / filter) into a single value that consumers pass around.
 
+pub mod arena;
 pub mod bits;
 pub mod capabilities;
 pub mod error;
@@ -13,6 +14,7 @@ pub mod execution;
 pub mod filter;
 pub mod format;
 pub mod frame;
+pub mod limits;
 pub mod options;
 pub mod packet;
 pub mod picture;
@@ -30,6 +32,7 @@ pub use format::{
     ChannelLayout, ChannelPosition, MediaType, ParseChannelLayoutError, PixelFormat, SampleFormat,
 };
 pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
+pub use limits::DecoderLimits;
 pub use options::{
     parse_options, CodecOptions, CodecOptionsStruct, OptionField, OptionKind, OptionValue,
 };

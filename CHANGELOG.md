@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `DecoderLimits` (in new `crate::limits` module) — small `Copy + Default`
+  cap struct (`max_pixels_per_frame`, `max_alloc_bytes_per_frame`,
+  `max_alloc_count_per_frame`, `max_arenas_in_flight`,
+  `max_decoded_audio_seconds_per_packet`) for cross-cutting decoder DoS
+  protection. Conservative-but-finite defaults (32 k × 32 k pixels, 1 GiB
+  per arena, 60 s of decoded audio per packet) so no real-world stream
+  changes; harden via the `with_*` builder methods.
+- `CodecParameters::limits()` accessor and `with_limits()` builder
+  thread the caps through every decoder constructed from these
+  parameters. New field on the existing `#[non_exhaustive]` struct;
+  callers using the typed constructors (`audio()` / `video()` /
+  `subtitle()` / `data()`) are unaffected.
+- `Error::ResourceExhausted(String)` variant + `Error::resource_exhausted()`
+  helper. Canonical "DoS protection fired" error for header-parse
+  rejections and arena-pool exhaustion.
+- New `crate::arena` module — refcounted arena pool for decoder frame
+  allocations. `ArenaPool` (lazy-allocating buffer pool, `Send + Sync`),
+  `Arena` (bump-pointer allocator over a `Box<[u8]>`, `!Send` by design),
+  `FrameInner` / `Frame = Rc<FrameInner>` (refcounted handle whose last
+  `Drop` returns its arena to the pool), and `FrameHeader` (minimal
+  width / height / pixel-format / pts metadata). Hand-rolled bump
+  allocator (no `bumpalo` dep yet); `Rc`-based `Frame` for the
+  single-threaded decoder path — an `Arc` sibling type can be added
+  later for the parallel-decoder path without breaking this one.
+
 ## [0.1.7](https://github.com/OxideAV/oxideav-core/compare/v0.1.6...v0.1.7) - 2026-04-26
 
 ### Other

@@ -27,6 +27,15 @@ pub enum Error {
     #[error("codec not found: {0}")]
     CodecNotFound(String),
 
+    /// A decoder (or arena pool) refused to allocate or proceed because
+    /// doing so would exceed a configured [`DecoderLimits`](crate::DecoderLimits)
+    /// cap, or because a pool has no free slot. This is the canonical
+    /// "DoS protection fired" error — callers should treat it as a hard
+    /// rejection of the input or a transient backpressure signal, never
+    /// retry blindly.
+    #[error("resource exhausted: {0}")]
+    ResourceExhausted(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -42,5 +51,12 @@ impl Error {
 
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())
+    }
+
+    /// Construct a [`Error::ResourceExhausted`] with the given message.
+    /// Use this from any decoder that has just hit a `DecoderLimits` cap
+    /// or an arena-pool exhaustion.
+    pub fn resource_exhausted(msg: impl Into<String>) -> Self {
+        Self::ResourceExhausted(msg.into())
     }
 }

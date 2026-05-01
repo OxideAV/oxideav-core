@@ -1,6 +1,7 @@
 //! Stream metadata shared between containers and codecs.
 
 use crate::format::{ChannelLayout, MediaType, PixelFormat, SampleFormat};
+use crate::limits::DecoderLimits;
 use crate::options::CodecOptions;
 use crate::rational::Rational;
 use crate::time::TimeBase;
@@ -294,6 +295,14 @@ pub struct CodecParameters {
     /// [`crate::options`]. Parsed once at encoder/decoder construction;
     /// the hot path never touches this.
     pub options: CodecOptions,
+
+    /// DoS-protection caps threaded into every decoder constructed from
+    /// these parameters. See [`DecoderLimits`] for the semantics of each
+    /// field. Defaults are conservative-but-finite (32 k × 32 k pixels,
+    /// 1 GiB per arena, etc.) — every existing real-world stream
+    /// decodes unchanged. Tighten via [`Self::with_limits`] when the
+    /// caller wants to harden the pipeline against untrusted input.
+    pub limits: DecoderLimits,
 }
 
 impl CodecParameters {
@@ -312,6 +321,7 @@ impl CodecParameters {
             extradata: Vec::new(),
             bit_rate: None,
             options: CodecOptions::default(),
+            limits: DecoderLimits::default(),
         }
     }
 
@@ -348,6 +358,7 @@ impl CodecParameters {
             extradata: Vec::new(),
             bit_rate: None,
             options: CodecOptions::default(),
+            limits: DecoderLimits::default(),
         }
     }
 
@@ -370,6 +381,7 @@ impl CodecParameters {
             extradata: Vec::new(),
             bit_rate: None,
             options: CodecOptions::default(),
+            limits: DecoderLimits::default(),
         }
     }
 
@@ -391,6 +403,7 @@ impl CodecParameters {
             extradata: Vec::new(),
             bit_rate: None,
             options: CodecOptions::default(),
+            limits: DecoderLimits::default(),
         }
     }
 
@@ -437,6 +450,30 @@ impl CodecParameters {
     pub fn resolved_channels(&self) -> Option<u16> {
         self.channels
             .or_else(|| self.channel_layout.map(|l| l.channel_count()))
+    }
+
+    /// Read-only access to the DoS-protection caps for any decoder
+    /// constructed from these parameters. See [`DecoderLimits`].
+    pub fn limits(&self) -> &DecoderLimits {
+        &self.limits
+    }
+
+    /// Builder method: replace the [`DecoderLimits`] for these
+    /// parameters. Use to tighten caps before passing parameters into
+    /// `make_decoder` (e.g. when processing untrusted uploads on a
+    /// shared server).
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters, DecoderLimits};
+    /// let limits = DecoderLimits::default()
+    ///     .with_max_pixels_per_frame(4096 * 4096)
+    ///     .with_max_arenas_in_flight(2);
+    /// let p = CodecParameters::video(CodecId::new("h263")).with_limits(limits);
+    /// assert_eq!(p.limits().max_pixels_per_frame, 4096 * 4096);
+    /// ```
+    pub fn with_limits(mut self, limits: DecoderLimits) -> Self {
+        self.limits = limits;
+        self
     }
 }
 
