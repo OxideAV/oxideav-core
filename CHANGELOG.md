@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0](https://github.com/OxideAV/oxideav-core/compare/v0.1.9...v0.2.0) - 2026-05-01
+## [0.1.10](https://github.com/OxideAV/oxideav-core/compare/v0.1.9...v0.1.10) - 2026-05-01
 
 ### Added
 
@@ -27,14 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Minor version bump (0.1.9 → 0.2.0): adding a trait method is a
-  breaking change under SemVer even when a default impl is supplied,
-  because downstream `impl Decoder for Foo` blocks that call
-  `receive_arena_frame()` on `dyn Decoder` are now resolving against
-  a method that didn't exist before. Every existing `Decoder` impl
-  inside this workspace continues to compile unchanged thanks to the
-  default impl; only consumers that exercise the new API need to
-  update.
+- 0.2.0 was published earlier today and immediately yanked + tag
+  deleted. This 0.1.10 patch carries the same `receive_arena_frame()`
+  addition under a patch version, since the change is purely additive
+  (new method with default impl; no existing `Decoder` impl breaks).
 
 ## [0.1.9](https://github.com/OxideAV/oxideav-core/compare/v0.1.8...v0.1.9) - 2026-05-01
 
