@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-core/compare/v0.1.9...v0.2.0) - 2026-05-01
+
+### Added
+
+- New `Decoder::receive_arena_frame() -> Result<arena::sync::Frame>`
+  method on the public `Decoder` trait. Returns the next decoded frame
+  as an arena-backed `arena::sync::Frame` so the caller can read plane
+  bytes straight out of the decoder's arena buffer with no per-plane
+  memcpy. Decoders that build their output through an
+  `arena::sync::ArenaPool` should override this to expose true
+  zero-copy frames (the first two such ports are oxideav-h261 and
+  oxideav-h263). Default implementation delegates to `receive_frame()`
+  and copies the resulting `VideoFrame` planes into a freshly-leased
+  one-shot `arena::sync::ArenaPool` — additive change for every
+  existing `Decoder` impl, no source changes required to keep
+  compiling. Audio / subtitle frames return `Error::Unsupported` from
+  the default impl (the arena `Frame` body is video-only in round 2).
+
+### Notes
+
+- Minor version bump (0.1.9 → 0.2.0): adding a trait method is a
+  breaking change under SemVer even when a default impl is supplied,
+  because downstream `impl Decoder for Foo` blocks that call
+  `receive_arena_frame()` on `dyn Decoder` are now resolving against
+  a method that didn't exist before. Every existing `Decoder` impl
+  inside this workspace continues to compile unchanged thanks to the
+  default impl; only consumers that exercise the new API need to
+  update.
+
 ## [0.1.9](https://github.com/OxideAV/oxideav-core/compare/v0.1.8...v0.1.9) - 2026-05-01
 
 ### Added

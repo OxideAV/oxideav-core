@@ -23,10 +23,11 @@
 
 use std::collections::HashMap;
 
+use crate::arena;
 use crate::{
     CodecCapabilities, CodecId, CodecOptionsStruct, CodecParameters, CodecPreferences,
-    CodecResolver, CodecTag, Error, ExecutionContext, Frame, OptionField, Packet, ProbeContext,
-    ProbeFn, Result,
+    CodecResolver, CodecTag, Error, ExecutionContext, Frame, OptionField, Packet, PixelFormat,
+    ProbeContext, ProbeFn, Result,
 };
 
 // ───────────────────────── codec traits ─────────────────────────
@@ -42,6 +43,41 @@ pub trait Decoder: Send {
     /// Pull the next decoded frame, if any. Returns `Error::NeedMore` when the
     /// decoder needs another packet.
     fn receive_frame(&mut self) -> Result<Frame>;
+
+    /// Pull the next decoded frame as an arena-backed [`arena::sync::Frame`].
+    ///
+    /// Decoders that build their output through an
+    /// [`arena::sync::ArenaPool`] override this to return the pooled
+    /// [`arena::sync::Frame`] **directly**, with no per-plane memcpy
+    /// out — the caller gets true zero-copy plane access via
+    /// [`arena::sync::FrameInner::plane`].
+    ///
+    /// The default implementation delegates to [`Self::receive_frame`]
+    /// and copies the video planes into a freshly-leased one-shot
+    /// `arena::sync::ArenaPool`. This makes the method an additive
+    /// change for every existing [`Decoder`] impl: callers using the
+    /// new API still work, but pay one memcpy per plane.
+    ///
+    /// **Audio / subtitle frames:** the [`arena::sync::Frame`] body is
+    /// video-only (planes + [`arena::sync::FrameHeader`] with
+    /// width/height/pixel format). The default implementation returns
+    /// [`Error::Unsupported`] for non-video frames; an audio decoder
+    /// that wants to expose `receive_arena_frame()` must override it
+    /// with its own arena-backed audio-frame type once the framework
+    /// gains one. Until then, audio decoders should keep using
+    /// [`Self::receive_frame`].
+    fn receive_arena_frame(&mut self) -> Result<arena::sync::Frame> {
+        let frame = self.receive_frame()?;
+        match frame {
+            Frame::Video(v) => video_frame_to_arena_sync_frame(&v),
+            Frame::Audio(_) => Err(Error::unsupported(
+                "receive_arena_frame: audio frames not yet supported by default impl",
+            )),
+            Frame::Subtitle(_) => Err(Error::unsupported(
+                "receive_arena_frame: subtitle frames have no arena-backed representation",
+            )),
+        }
+    }
 
     /// Signal end-of-stream. After this, `receive_frame` will drain buffered
     /// frames and eventually return `Error::Eof`.
@@ -103,6 +139,75 @@ pub trait Encoder: Send {
     /// Advisory: announce the runtime environment. Same semantics as
     /// [`Decoder::set_execution_context`].
     fn set_execution_context(&mut self, _ctx: &ExecutionContext) {}
+}
+
+/// Default-impl helper for [`Decoder::receive_arena_frame`]: copy a
+/// heap-backed [`crate::VideoFrame`] into a freshly-leased
+/// [`arena::sync::Frame`].
+///
+/// Allocates a single-slot, single-arena `arena::sync::ArenaPool`
+/// sized to fit the planes verbatim. The pool is dropped at the end of
+/// this call; the returned `Frame` keeps its leased buffer alive via
+/// `Arc<FrameInner>` (the `Arena`'s `Weak` handle to the dropped pool
+/// just stops upgrading — the buffer drops normally when the last
+/// `Frame` clone goes away).
+///
+/// Width / height / pixel-format on the returned `FrameHeader` are
+/// derived from the plane shape: `width = plane[0].stride`,
+/// `height = plane[0].data.len() / stride`. Pixel format is left as
+/// [`PixelFormat::Yuv420P`] when there are 3 planes, else the first
+/// per-plane sensible default — this is a best-effort label for the
+/// generic conversion path; decoders that override
+/// `receive_arena_frame` themselves should set the correct pixel
+/// format.
+fn video_frame_to_arena_sync_frame(v: &crate::VideoFrame) -> Result<arena::sync::Frame> {
+    if v.planes.is_empty() {
+        return Err(Error::invalid(
+            "receive_arena_frame: video frame has no planes",
+        ));
+    }
+    let total_bytes: usize = v.planes.iter().map(|p| p.data.len()).sum();
+    if total_bytes == 0 {
+        return Err(Error::invalid(
+            "receive_arena_frame: video frame planes are empty",
+        ));
+    }
+    // One-shot pool sized exactly to the frame. The pool drops at end
+    // of scope; the leased Arena lives on inside the returned Frame
+    // (its Weak<ArenaPool> handle just won't upgrade in Drop, so the
+    // Box<[u8]> falls through to a normal heap free).
+    let pool = arena::sync::ArenaPool::with_alloc_count_cap(
+        1,
+        total_bytes,
+        // One alloc per plane, plus a generous safety margin.
+        (v.planes.len() as u32).saturating_add(4),
+    );
+    let arena = pool.lease()?;
+    let mut plane_offsets: Vec<(usize, usize)> = Vec::with_capacity(v.planes.len());
+    let mut cursor = 0usize;
+    for plane in &v.planes {
+        let dst = arena.alloc::<u8>(plane.data.len())?;
+        dst.copy_from_slice(&plane.data);
+        plane_offsets.push((cursor, plane.data.len()));
+        cursor += plane.data.len();
+    }
+    // Best-effort header: width = stride of plane 0, height inferred
+    // from plane 0's data length. Pixel format defaults to Yuv420P for
+    // the common 3-plane case, Gray8 for single-plane, otherwise
+    // Yuv444P. Decoders that care about exact pixel-format / width /
+    // height should override `receive_arena_frame` themselves so they
+    // can emit a correct `FrameHeader` straight from their arena
+    // build path.
+    let stride0 = v.planes[0].stride.max(1);
+    let width = stride0 as u32;
+    let height = (v.planes[0].data.len() / stride0) as u32;
+    let pixel_format = match v.planes.len() {
+        1 => PixelFormat::Gray8,
+        3 => PixelFormat::Yuv420P,
+        _ => PixelFormat::Yuv444P,
+    };
+    let header = arena::sync::FrameHeader::new(width, height, pixel_format, v.pts);
+    arena::sync::FrameInner::new(arena, &plane_offsets, header)
 }
 
 /// Factory that builds a decoder for a given codec parameter set.
