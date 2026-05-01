@@ -557,15 +557,51 @@ mod tests {
         let _again = pool.lease().expect("re-lease after drop");
     }
 
+    #[cfg(miri)]
     #[test]
-    fn arena_alignment_is_respected() {
-        let pool = small_pool(1, 64);
+    fn arena_alloc_can_return_misaligned_typed_slice() {
+        let pool = small_pool(1, 0);
         let arena = pool.lease().unwrap();
-        let _: &mut [u8] = arena.alloc::<u8>(1).unwrap();
-        let s: &mut [u32] = arena.alloc::<u32>(4).unwrap();
-        let addr = s.as_ptr() as usize;
-        assert_eq!(addr % align_of::<u32>(), 0);
-        assert_eq!(s.len(), 4);
+
+        // Memory-safety issue: the arena's backing allocation is a
+        // `Box<[u8]>`, so its base pointer is only guaranteed to be
+        // byte-aligned. `alloc::<T>` aligns only the byte offset, not
+        // the absolute address, and then constructs `&mut [T]`. The
+        // empty-buffer case makes this deterministic: even an empty
+        // `&mut [u32]` must have an aligned pointer, but `Box<[u8]>`
+        // uses an alignment-1 dangling pointer when its length is 0.
+        let _s: &mut [u32] = arena.alloc::<u32>(0).unwrap();
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn arena_alloc_allows_invalid_bit_patterns_for_copy_types() {
+        let pool = small_pool(1, 1);
+        let arena = pool.lease().unwrap();
+
+        // Memory-safety issue: `alloc<T>` is a safe API but accepts any
+        // `T: Copy`. Fresh pool buffers are zero-filled, and zero is not
+        // a valid `NonZeroU8`. Reading through the returned reference
+        // makes Miri report an invalid value created by safe code.
+        let values = arena.alloc::<std::num::NonZeroU8>(1).unwrap();
+        let _ = values[0].get();
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn arena_alloc_second_slice_invalidates_first_mut_reference() {
+        let pool = small_pool(1, 2);
+        let arena = pool.lease().unwrap();
+
+        // Memory-safety issue: each `alloc` calls `[u8]::as_mut_ptr` on
+        // the whole backing slice before carving out the requested
+        // subslice. That materializes a new mutable borrow of the whole
+        // buffer and invalidates previously returned `&mut` slices, even
+        // when the byte ranges are disjoint.
+        let first = arena.alloc::<u8>(1).unwrap();
+        let second = arena.alloc::<u8>(1).unwrap();
+        first[0] = 1;
+        second[0] = 2;
     }
 
     fn build_simple_frame(pool: &Arc<ArenaPool>) -> Frame {
@@ -669,33 +705,37 @@ mod tests {
         assert_eq!(frame.plane(0).unwrap().len(), 16);
     }
 
+    #[cfg(miri)]
     #[test]
-    fn concurrent_alloc_produces_disjoint_slices() {
-        // Two threads alloc 64 bytes each from a 256-byte arena.
-        // Their slices must not overlap.
+    fn concurrent_alloc_retags_whole_buffer_while_other_thread_writes() {
+        // Memory-safety issue: `Arena` is `Sync`, so safe code can call
+        // `alloc` while another thread writes through a previously
+        // returned slice. The CAS cursor makes the byte ranges disjoint,
+        // but `alloc` still materializes a mutable borrow of the whole
+        // buffer via `[u8]::as_mut_ptr`; Miri reports that retag as a
+        // data race with the other thread's write.
         let pool = small_pool(1, 256);
         let arena = Arc::new(pool.lease().unwrap());
+        let barrier = Arc::new(std::sync::Barrier::new(2));
         let a = Arc::clone(&arena);
         let b = Arc::clone(&arena);
+        let barrier_a = Arc::clone(&barrier);
+        let barrier_b = Arc::clone(&barrier);
         let h1 = std::thread::spawn(move || {
             let s: &mut [u8] = a.alloc::<u8>(64).unwrap();
-            // Fill so we can detect overlap from the other thread.
+            barrier_a.wait();
             for x in s.iter_mut() {
                 *x = 0xAA;
             }
-            (s.as_ptr() as usize, s.len())
         });
         let h2 = std::thread::spawn(move || {
+            barrier_b.wait();
             let s: &mut [u8] = b.alloc::<u8>(64).unwrap();
             for x in s.iter_mut() {
                 *x = 0xBB;
             }
-            (s.as_ptr() as usize, s.len())
         });
-        let (p1, l1) = h1.join().unwrap();
-        let (p2, l2) = h2.join().unwrap();
-        // Disjoint ranges: [p1, p1+l1) and [p2, p2+l2) do not overlap.
-        let no_overlap = p1 + l1 <= p2 || p2 + l2 <= p1;
-        assert!(no_overlap, "concurrent alloc returned overlapping slices");
+        h1.join().unwrap();
+        h2.join().unwrap();
     }
 }

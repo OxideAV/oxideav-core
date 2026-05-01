@@ -539,17 +539,51 @@ mod tests {
         let _again = pool.lease().expect("re-lease after drop");
     }
 
+    #[cfg(miri)]
     #[test]
-    fn arena_alignment_is_respected() {
-        let pool = small_pool(1, 64);
+    fn arena_alloc_can_return_misaligned_typed_slice() {
+        let pool = small_pool(1, 0);
         let arena = pool.lease().unwrap();
-        // Allocate a single u8 to misalign the cursor.
-        let _: &mut [u8] = arena.alloc::<u8>(1).unwrap();
-        // Now allocate u32s; expect cursor to be aligned to 4.
-        let s: &mut [u32] = arena.alloc::<u32>(4).unwrap();
-        let addr = s.as_ptr() as usize;
-        assert_eq!(addr % align_of::<u32>(), 0);
-        assert_eq!(s.len(), 4);
+
+        // Memory-safety issue: the arena's backing allocation is a
+        // `Box<[u8]>`, so its base pointer is only guaranteed to be
+        // byte-aligned. `alloc::<T>` aligns only the byte offset, not
+        // the absolute address, and then constructs `&mut [T]`. The
+        // empty-buffer case makes this deterministic: even an empty
+        // `&mut [u32]` must have an aligned pointer, but `Box<[u8]>`
+        // uses an alignment-1 dangling pointer when its length is 0.
+        let _s: &mut [u32] = arena.alloc::<u32>(0).unwrap();
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn arena_alloc_allows_invalid_bit_patterns_for_copy_types() {
+        let pool = small_pool(1, 1);
+        let arena = pool.lease().unwrap();
+
+        // Memory-safety issue: `alloc<T>` is a safe API but accepts any
+        // `T: Copy`. Fresh pool buffers are zero-filled, and zero is not
+        // a valid `NonZeroU8`. Reading through the returned reference
+        // makes Miri report an invalid value created by safe code.
+        let values = arena.alloc::<std::num::NonZeroU8>(1).unwrap();
+        let _ = values[0].get();
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn arena_alloc_second_slice_invalidates_first_mut_reference() {
+        let pool = small_pool(1, 2);
+        let arena = pool.lease().unwrap();
+
+        // Memory-safety issue: each `alloc` calls `[u8]::as_mut_ptr` on
+        // the whole backing slice before carving out the requested
+        // subslice. That materializes a new mutable borrow of the whole
+        // buffer and invalidates previously returned `&mut` slices, even
+        // when the byte ranges are disjoint.
+        let first = arena.alloc::<u8>(1).unwrap();
+        let second = arena.alloc::<u8>(1).unwrap();
+        first[0] = 1;
+        second[0] = 2;
     }
 
     fn build_simple_frame(pool: &Arc<ArenaPool>) -> Frame {
