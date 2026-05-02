@@ -23,3 +23,10 @@ json-options = []
 [dependencies]
 thiserror = "2"
 serde_json = "1"
+# Used for the `Zeroable` marker trait that bounds `Arena::alloc<T>`
+# — guarantees that an all-zero bit pattern is a valid value for T,
+# which is required because pool buffers are zero-filled at allocation
+# time and `alloc<T>` returns a `&mut [T]` pointing at those bytes
+# (reading any other type, e.g. `NonZeroU8`, would be UB). bytemuck is
+# a zero-overhead, no-deps marker-trait crate.
+bytemuck = "1"
