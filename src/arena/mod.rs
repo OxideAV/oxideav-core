@@ -101,6 +101,30 @@ use crate::format::PixelFormat;
 /// statically rejects any type with a stricter alignment requirement.
 pub(crate) const MAX_ALIGN: usize = 64;
 
+/// Strict-provenance-compatible `MAX_ALIGN`-aligned dangling sentinel
+/// used for the `cap == 0` empty-buffer case in [`Buffer::new_zeroed`].
+///
+/// Casting a bare integer to `*mut u8` is rejected by Miri's
+/// `-Zmiri-strict-provenance` check (the resulting pointer has no
+/// provenance and cannot legally be reborrowed). Taking the address of
+/// a real static gives us a properly-provenanced pointer with the same
+/// runtime properties (non-null, `MAX_ALIGN`-aligned, never
+/// dereferenced for `cap == 0`).
+///
+/// `#[repr(align(N))]` requires a literal, so the `const_assert` below
+/// (a const-eval'd `assert!`) catches the day someone bumps
+/// [`MAX_ALIGN`] without updating the literal here.
+#[repr(align(64))]
+struct AlignedSentinel([u8; 0]);
+
+const _: () = assert!(
+    align_of::<AlignedSentinel>() == MAX_ALIGN,
+    "AlignedSentinel alignment must match MAX_ALIGN; \
+     update the #[repr(align(N))] literal on AlignedSentinel"
+);
+
+static EMPTY_SENTINEL: AlignedSentinel = AlignedSentinel([]);
+
 /// Layout used to allocate (and deallocate) pool buffers. `cap` is the
 /// per-arena byte capacity; alignment is fixed at [`MAX_ALIGN`].
 ///
@@ -146,19 +170,17 @@ impl Buffer {
             None => {
                 // Produce a `MAX_ALIGN`-aligned dangling pointer that
                 // is never dereferenced (cap == 0 means no allocation
-                // accesses go through it). We synthesise it from the
-                // integer constant rather than using a strict-
-                // provenance helper because `ptr::without_provenance_mut`
-                // is only stable since Rust 1.84 and the crate's
-                // declared MSRV is 1.80. Miri under default
-                // (permissive) provenance accepts this; for strict
-                // provenance Miri it will warn but not error, and we
-                // never actually load through this pointer.
+                // accesses go through it). We use the address of a
+                // real `MAX_ALIGN`-aligned static rather than an
+                // integer-to-pointer cast: the latter is rejected by
+                // Miri's `-Zmiri-strict-provenance` check (the
+                // resulting pointer has no provenance and cannot
+                // legally be reborrowed). `NonNull::from(&...)`
+                // preserves provenance and is strict-provenance
+                // friendly; the `cast::<u8>()` is also
+                // provenance-preserving.
                 Buffer {
-                    // SAFETY: `MAX_ALIGN` is a non-zero usize, so
-                    // casting it to `*mut u8` produces a non-null
-                    // pointer that we will never dereference.
-                    ptr: unsafe { NonNull::new_unchecked(MAX_ALIGN as *mut u8) },
+                    ptr: NonNull::from(&EMPTY_SENTINEL).cast::<u8>(),
                     cap: 0,
                 }
             }

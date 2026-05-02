@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `arena::Buffer::new_zeroed` no longer uses an integer-to-pointer
+  cast for the `cap == 0` empty-buffer sentinel. The previous
+  `MAX_ALIGN as *mut u8` synthesis was rejected by Miri's
+  `-Zmiri-strict-provenance` check (the resulting pointer has no
+  provenance and cannot legally be reborrowed). Replaced with the
+  address of a `#[repr(align(64))]`-aligned zero-sized static
+  (`EMPTY_SENTINEL`), reached via `NonNull::from(&EMPTY_SENTINEL)
+  .cast::<u8>()` — same runtime properties (non-null, `MAX_ALIGN`
+  -aligned, never dereferenced) but with real strict-provenance
+  -compatible provenance. A `const`-eval'd assert pins the static's
+  alignment to `MAX_ALIGN` so the day someone bumps `MAX_ALIGN` they
+  also remember to update the `#[repr(align(N))]` literal.
+
 ## [0.1.11](https://github.com/OxideAV/oxideav-core/compare/v0.1.10...v0.1.11) - 2026-05-02
 
 ### Other
