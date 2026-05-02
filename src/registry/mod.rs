@@ -19,4 +19,7 @@ pub use container::{
 };
 pub use context::RuntimeContext;
 pub use filter::{FilterFactory, FilterRegistry};
-pub use source::{OpenSourceFn, SourceRegistry};
+pub use source::{
+    BytesSource, FrameSource, OpenBytesFn, OpenFramesFn, OpenPacketsFn, PacketSource, SourceOutput,
+    SourceRegistry,
+};

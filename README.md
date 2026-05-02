@@ -20,6 +20,12 @@ pure-Rust media framework:
 * **`bits`** — shared MSB-first / LSB-first `BitReader` / `BitWriter`
   plus unary helpers. Used by the FLAC, AAC, H.264, HEVC, Vorbis and a
   dozen other codecs in the workspace.
+* **`SourceRegistry`** — URI scheme dispatch for sources. Drivers
+  register as one of three shapes — `BytesSource` (file / http), 
+  `PacketSource` (transport-layer protocols that pre-demux), or
+  `FrameSource` (synthetic generators that emit decoded frames) —
+  and `open(uri)` returns a `SourceOutput` enum the pipeline executor
+  branches on.
 * **`Error`** — one unified error enum used across the ecosystem.
 
 Zero C dependencies. Zero FFI. Zero `*-sys` crates.

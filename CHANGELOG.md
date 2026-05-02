@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking**: `SourceRegistry` now returns a `SourceOutput` enum from
+  `open()` instead of a bare `Box<dyn ReadSeek>`. The enum has three
+  variants — `Bytes`, `Packets`, `Frames` — backed by three new traits
+  (`BytesSource`, `PacketSource`, `FrameSource`) that drivers implement.
+  `BytesSource` is `Read + Seek + Send` and is blanket-implemented for
+  every type that satisfies the bounds, so existing readers (`File`,
+  `Cursor<Vec<u8>>`, the HTTP-Range adapter) work unchanged.
+  `PacketSource` and `FrameSource` let transport-layer protocols (RTMP,
+  …) and synthetic generators register themselves on the same opener
+  API by skipping the demux / decode upstream stages.
+- **Breaking**: The old `register(scheme, OpenSourceFn)` method and the
+  `OpenSourceFn` type alias are removed. Drivers register via one of
+  `register_bytes`, `register_packets`, or `register_frames` depending
+  on the source shape. Every in-tree driver migrates atomically.
+
 ## [0.1.10](https://github.com/OxideAV/oxideav-core/compare/v0.1.9...v0.1.10) - 2026-05-01
 
 ### Added

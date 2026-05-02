@@ -40,9 +40,10 @@ pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
 pub use registry::{
-    CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn, ContainerRegistry, Decoder,
-    DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory, FilterRegistry, Muxer,
-    OpenDemuxerFn, OpenMuxerFn, OpenSourceFn, ProbeData, ProbeScore, ReadSeek, RuntimeContext,
+    BytesSource, CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn,
+    ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory,
+    FilterRegistry, FrameSource, Muxer, OpenBytesFn, OpenDemuxerFn, OpenFramesFn, OpenMuxerFn,
+    OpenPacketsFn, PacketSource, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceOutput,
     SourceRegistry, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
 };
 pub use stream::{
