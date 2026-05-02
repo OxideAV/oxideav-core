@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11](https://github.com/OxideAV/oxideav-core/compare/v0.1.10...v0.1.11) - 2026-05-02
+
+### Other
+
+- fix four UB issues surfaced by miri audit
+- typed-source traits (Bytes / Packets / Frames)
+
 ### Changed
 
 - **Breaking**: `SourceRegistry` now returns a `SourceOutput` enum from
