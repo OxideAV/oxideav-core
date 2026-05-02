@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12](https://github.com/OxideAV/oxideav-core/compare/v0.1.11...v0.1.12) - 2026-05-02
+
+### Other
+
+- replace int-to-ptr sentinel with aligned static for strict-provenance
+- migrate to centralized OxideAV/.github reusable workflows
+
 ### Fixed
 
 - `arena::Buffer::new_zeroed` no longer uses an integer-to-pointer
