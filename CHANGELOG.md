@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15](https://github.com/OxideAV/oxideav-core/compare/v0.1.14...v0.1.15) - 2026-05-03
+
+### Other
+
+- add Group::cache_key + fix missing Frame::Vector match arm
+
 ### Added
 
 - `vector::Group::cache_key: Option<u64>` — opaque memoisation key for
