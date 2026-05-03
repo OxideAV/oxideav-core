@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `vector::Group::cache_key: Option<u64>` — opaque memoisation key for
+  cacheable scene-graph subtrees. Producers that emit identifiable
+  cacheable content (e.g. a scribe-shaped glyph at a specific
+  `(face_id, glyph_id, size_q8, subpixel_x)`) compute a deterministic
+  hash and put it here; downstream rasterizers can use it as a bitmap-
+  cache key. Optional and namespace-agnostic — `oxideav-core` never
+  inspects the value.
+
+### Fixed
+
+- `registry::codec::Decoder::receive_arena_frame` default impl missed
+  the `Frame::Vector(_)` arm (added in 0.1.14 alongside the new variant
+  but the match wasn't updated). Returns `Error::Unsupported` to match
+  the audio / subtitle behaviour — no arena-backed representation for
+  vector frames today.
+
 ## [0.1.14] - 2026-05-04
 
 ### Added

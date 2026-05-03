@@ -86,6 +86,21 @@ pub struct Group {
     /// (using the path's own fill rule). `None` means "no clip".
     pub clip: Option<Path>,
     pub children: Vec<Node>,
+    /// Opaque cache key. When `Some(k)`, a downstream rasterizer is free
+    /// to memoise the rendered bitmap of this group's content (after
+    /// `transform` is applied) under key `k`, so re-rendering the same
+    /// group at the same effective resolution returns the cached bitmap.
+    ///
+    /// Producers that emit cacheable content (e.g. scribe shaping a
+    /// glyph at `(face_id, glyph_id, size_q8, subpixel_x)`) compute a
+    /// deterministic hash of their identity tuple and put it here. The
+    /// rasterizer treats it as a black box — `oxideav-core` never
+    /// inspects the value, so each producer's namespace stays private.
+    ///
+    /// `None` (the default) means "do not cache; render fresh every
+    /// time". Most synthesised vector content (a one-off rectangle, a
+    /// gradient panel) leaves this `None`.
+    pub cache_key: Option<u64>,
 }
 
 impl Default for Group {
@@ -95,6 +110,7 @@ impl Default for Group {
             opacity: 1.0,
             clip: None,
             children: Vec::new(),
+            cache_key: None,
         }
     }
 }
