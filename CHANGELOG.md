@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-05-04
+
+### Added
+
+- New `crate::vector` module — primitive types for resolution-independent
+  vector-graphics frames. The set is the SVG 1.1 / PDF 1.4 intersection
+  so the same `VectorFrame` round-trips through both formats without
+  lossy conversion: `Path` (move / line / quadratic / cubic / elliptic-arc
+  / close commands), `PathNode` with optional fill / stroke / fill rule,
+  `Group` (transform / opacity / optional clip / children), `Paint`
+  (`Solid` / `LinearGradient` / `RadialGradient` with `Pad` / `Reflect`
+  / `Repeat` spread), `Stroke` (cap / join / miter limit / dash),
+  `Transform2D` 2D affine matrix with `identity` / `translate` /
+  `scale` / `rotate` / `skew_x` / `skew_y` / `compose` / `apply`,
+  `Rgba`, `Rect`, `ViewBox`, and `ImageRef` for embedded raster
+  passthrough (carries a child `VideoFrame`).
+- `Frame::Vector(VectorFrame)` variant. The `Frame` enum is already
+  `#[non_exhaustive]`, so adding the variant is an additive change for
+  downstream `match` arms with a wildcard.
+- All vector types are re-exported at the crate root.
+
+### Changed
+
+- `Decoder::receive_arena_frame` default impl gains a `Frame::Vector`
+  arm returning `Error::Unsupported` (the arena `Frame` body is
+  video-only — vector frames have no arena-backed representation
+  today). Required to keep the in-tree exhaustive match compiling.
+
+### Notes
+
+- Text nodes are intentionally deferred — they need font handling and
+  scribe coupling that lands alongside `oxideav-svg` (#349).
+- No rasterizer / SVG parser / PDF writer in this crate; those are
+  downstream tasks (#349 / #350 / #351). Round 1 ships only the IR.
+
 ## [0.1.13](https://github.com/OxideAV/oxideav-core/compare/v0.1.12...v0.1.13) - 2026-05-03
 
 ### Other

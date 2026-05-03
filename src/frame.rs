@@ -1,6 +1,7 @@
 //! Uncompressed audio and video frames.
 
 use crate::subtitle::SubtitleCue;
+use crate::vector::VectorFrame;
 
 /// A decoded chunk of uncompressed data: either audio samples, a video
 /// picture, or (for subtitle streams) a single styled cue.
@@ -18,6 +19,11 @@ pub enum Frame {
     /// but the enclosing pipeline/muxer can still rescale via `pts` at
     /// the packet layer.
     Subtitle(SubtitleCue),
+    /// A resolution-independent vector-graphics frame. Produced by
+    /// vector-format decoders (`oxideav-svg`, the vector path of
+    /// `oxideav-pdf`) and consumed by vector renderers / writers.
+    /// See [`crate::vector`] for the full primitive set.
+    Vector(VectorFrame),
 }
 
 impl Frame {
@@ -26,6 +32,7 @@ impl Frame {
             Self::Audio(a) => a.pts,
             Self::Video(v) => v.pts,
             Self::Subtitle(s) => Some(s.start_us),
+            Self::Vector(v) => v.pts,
         }
     }
 }

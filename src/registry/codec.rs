@@ -76,6 +76,9 @@ pub trait Decoder: Send {
             Frame::Subtitle(_) => Err(Error::unsupported(
                 "receive_arena_frame: subtitle frames have no arena-backed representation",
             )),
+            Frame::Vector(_) => Err(Error::unsupported(
+                "receive_arena_frame: vector frames have no arena-backed representation",
+            )),
         }
     }
 

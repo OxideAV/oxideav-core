@@ -23,6 +23,7 @@ pub mod registry;
 pub mod stream;
 pub mod subtitle;
 pub mod time;
+pub mod vector;
 
 pub use capabilities::{CodecCapabilities, CodecPreferences, DEFAULT_PRIORITY};
 pub use error::{Error, Result};
@@ -52,3 +53,8 @@ pub use stream::{
 };
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
 pub use time::{TimeBase, Timestamp};
+pub use vector::{
+    DashPattern, FillRule, GradientStop, Group, ImageRef, LineCap, LineJoin, LinearGradient, Node,
+    Paint, Path, PathCommand, PathNode, Point, RadialGradient, Rect, Rgba, SpreadMethod, Stroke,
+    Transform2D, VectorFrame, ViewBox,
+};
