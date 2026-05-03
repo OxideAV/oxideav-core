@@ -531,6 +531,14 @@ pub enum PixelFormat {
     /// inverted CMYK (where 0 = full ink) is a separate variant reserved
     /// for a future `CmykInverted`.
     Cmyk = 33,
+
+    // --- Wide-horizontal subsampled YUV ---
+    /// 8-bit YUV 4:1:1, planar (Y, U, V). Luma at full resolution; chroma
+    /// horizontally subsampled by 4 (each chroma sample covers a 4×1
+    /// luma block), no vertical subsampling. Native sampling of
+    /// NTSC DV-25 and a legal JPEG sampling layout (luma H=4, V=1;
+    /// chroma H=V=1) emitted by some real-world JPEG corpora.
+    Yuv411P = 34,
 }
 
 impl PixelFormat {
@@ -541,6 +549,7 @@ impl PixelFormat {
             Self::Yuv420P
                 | Self::Yuv422P
                 | Self::Yuv444P
+                | Self::Yuv411P
                 | Self::Yuv420P10Le
                 | Self::Yuv422P10Le
                 | Self::Yuv444P10Le
@@ -584,6 +593,7 @@ impl PixelFormat {
             Self::Yuv420P
             | Self::Yuv422P
             | Self::Yuv444P
+            | Self::Yuv411P
             | Self::Yuv420P10Le
             | Self::Yuv422P10Le
             | Self::Yuv444P10Le
@@ -617,6 +627,9 @@ impl PixelFormat {
             // 10/12-bit variants double the byte count but we report the
             // packed-bits-per-pixel estimate for a uniform heuristic.
             Self::Yuv420P | Self::YuvJ420P | Self::Nv12 | Self::Nv21 => 12,
+            // 4:1:1 has the same packed bits-per-pixel as 4:2:0 (luma at
+            // full res + 2 chroma planes each subsampled by 4).
+            Self::Yuv411P => 12,
             Self::Yuv422P | Self::YuvJ422P => 16,
             Self::Yuv444P | Self::YuvJ444P => 24,
             Self::Yuv420P10Le | Self::Yuv420P12Le => 24,
@@ -672,6 +685,7 @@ mod tests {
         assert_eq!(PixelFormat::Yuyv422 as u16, 31);
         assert_eq!(PixelFormat::Uyvy422 as u16, 32);
         assert_eq!(PixelFormat::Cmyk as u16, 33);
+        assert_eq!(PixelFormat::Yuv411P as u16, 34);
     }
 
     #[test]
