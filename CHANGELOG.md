@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `vector::Node::SoftMask { mask, mask_kind, content }` variant +
+  `MaskKind { Luminance, Alpha }` enum — covers SVG `<mask>` and PDF
+  `SMask` (subtype `Luminosity` vs. `Alpha`) at the IR level so the
+  rasterizer can apply per-pixel alpha modulation. The `mask` subtree
+  is rasterised separately and converted to coverage (BT.709 luminance
+  for `Luminance`, the mask's own alpha channel for `Alpha`); the
+  `content` subtree is then composited under that coverage. Matches
+  the SVG semantics where a `<mask>` rasterises into a 1-channel
+  bitmap that multiplies the masked content's per-pixel alpha.
+
 ## [0.1.15](https://github.com/OxideAV/oxideav-core/compare/v0.1.14...v0.1.15) - 2026-05-03
 
 ### Other

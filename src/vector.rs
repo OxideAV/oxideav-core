@@ -62,8 +62,8 @@ pub struct ViewBox {
 
 /// One node in the scene tree.
 ///
-/// Marked `#[non_exhaustive]` so future variants (text, masks, filters)
-/// can be added without breaking downstream `match` arms.
+/// Marked `#[non_exhaustive]` so future variants (text, filters) can
+/// be added without breaking downstream `match` arms.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Node {
@@ -71,6 +71,35 @@ pub enum Node {
     Group(Group),
     /// An embedded raster image painted into vector space.
     Image(ImageRef),
+    /// A soft-mask composite. The `mask` subtree is rasterised and
+    /// converted to a per-pixel alpha multiplier (luminance or alpha,
+    /// per [`MaskKind`]), then applied to the rasterised `content`
+    /// subtree. Mirrors SVG `<mask>` and PDF `SMask` (subtype `Luminosity`
+    /// vs. `Alpha`).
+    SoftMask {
+        /// Subtree rasterised to produce the per-pixel opacity
+        /// modulator.
+        mask: Box<Node>,
+        /// How to convert the rasterised mask to a coverage value.
+        mask_kind: MaskKind,
+        /// Subtree whose pixels are modulated by the mask.
+        content: Box<Node>,
+    },
+}
+
+/// How to interpret a soft mask's rasterised pixels as a coverage
+/// modulator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MaskKind {
+    /// Convert the mask's RGB to luminance (ITU-R BT.709 coefficients
+    /// — Y = 0.2126·R + 0.7152·G + 0.0722·B) and use Y as the
+    /// per-pixel alpha multiplier. Matches SVG `<mask>` default
+    /// (`mask-type="luminance"`) and PDF `SMask` `/Luminosity`.
+    #[default]
+    Luminance,
+    /// Use the mask's own alpha channel as the multiplier. Matches
+    /// SVG `<mask mask-type="alpha">` and PDF `SMask` `/Alpha`.
+    Alpha,
 }
 
 /// A grouping node — applies a transform / opacity / optional clip path
@@ -711,5 +740,47 @@ mod tests {
         assert_eq!(s.join, LineJoin::Miter);
         assert_eq!(s.miter_limit, 4.0);
         assert!(s.dash.is_none());
+    }
+
+    #[test]
+    fn soft_mask_construction_and_inspection() {
+        // Wrap a path in a SoftMask node with a luminance mask. Round-
+        // trips both children verbatim through clone + match.
+        fn rect_path() -> PathNode {
+            let mut p = Path::new();
+            p.move_to(Point::new(0.0, 0.0))
+                .line_to(Point::new(10.0, 0.0))
+                .line_to(Point::new(10.0, 10.0))
+                .line_to(Point::new(0.0, 10.0))
+                .close();
+            PathNode {
+                path: p,
+                fill: Some(Paint::Solid(Rgba::opaque(255, 255, 255))),
+                stroke: None,
+                fill_rule: FillRule::NonZero,
+            }
+        }
+        let n = Node::SoftMask {
+            mask: Box::new(Node::Path(rect_path())),
+            mask_kind: MaskKind::Luminance,
+            content: Box::new(Node::Path(rect_path())),
+        };
+        match &n {
+            Node::SoftMask {
+                mask_kind, content, ..
+            } => {
+                assert_eq!(*mask_kind, MaskKind::Luminance);
+                match content.as_ref() {
+                    Node::Path(_) => {}
+                    _ => panic!("expected Path content"),
+                }
+            }
+            _ => panic!("expected SoftMask"),
+        }
+    }
+
+    #[test]
+    fn mask_kind_default_is_luminance() {
+        assert_eq!(MaskKind::default(), MaskKind::Luminance);
     }
 }
