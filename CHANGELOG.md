@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13](https://github.com/OxideAV/oxideav-core/compare/v0.1.12...v0.1.13) - 2026-05-03
+
+### Other
+
+- add Yuv411P (8-bit YUV 4:1:1 planar)
+- drop duplicate semver_check key
+- replace never-match regex with semver_check = false
+- drop enable_miri input (miri now manual-only via workflow_dispatch)
+
 ## [0.1.12](https://github.com/OxideAV/oxideav-core/compare/v0.1.11...v0.1.12) - 2026-05-02
 
 ### Other
