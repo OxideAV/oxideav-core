@@ -2,19 +2,18 @@ name: CI
 
 # Thin shim around the OxideAV org-level reusable workflow. See
 # https://github.com/OxideAV/.github for the actual job definitions and
-# the input surface. Miri runs on every push/PR for this crate because
-# arena lives here and we'd rather catch UB regressions in CI than
-# from external audits (see PR #12, Shnatsel, 2026-05).
+# the input surface. Miri is manual-only (workflow_dispatch); trigger
+# it from the Actions UI when arena code changes (PR #12, Shnatsel,
+# 2026-05).
 
 on:
   push:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   ci:
     uses: OxideAV/.github/.github/workflows/crate-ci.yml@master
-    with:
-      enable_miri: true
     secrets: inherit
