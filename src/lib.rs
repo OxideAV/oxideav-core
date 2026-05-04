@@ -15,6 +15,7 @@ pub mod filter;
 pub mod format;
 pub mod frame;
 pub mod limits;
+pub mod metadata;
 pub mod options;
 pub mod packet;
 pub mod picture;
@@ -34,6 +35,7 @@ pub use format::{
 };
 pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
 pub use limits::DecoderLimits;
+pub use metadata::{Attachment, Chapter};
 pub use options::{
     parse_options, CodecOptions, CodecOptionsStruct, OptionField, OptionKind, OptionValue,
 };

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `crate::metadata` module — `Chapter` and `Attachment` structs
+  for structured container metadata (re-exported at the crate root).
+  `Chapter { id, start, end, title, language }` covers MKV
+  `Chapters`, MP4 chapter tracks, and Ogg `CHAPTERnn=` Vorbis
+  comments; `Attachment { name, mime, description, data }` covers
+  MKV `Attachments`. Both fields-public, `Clone + Debug + PartialEq`.
+- `Demuxer::chapters() -> &[Chapter]` and
+  `Demuxer::attachments() -> &[Attachment]` trait methods. Both have
+  default implementations returning `&[]`, so every existing demuxer
+  (mkv, mp4, mp3, ogg, flac, avi, wav, …) compiles unchanged. The
+  legacy flat `chapter:N:*` / `attachment:N:*` metadata keys keep
+  working for now; demuxers will migrate to the structured accessors
+  in follow-up rounds.
+
 ## [0.1.16](https://github.com/OxideAV/oxideav-core/compare/v0.1.15...v0.1.16) - 2026-05-03
 
 ### Other

@@ -61,6 +61,26 @@ pub trait Demuxer: Send {
     fn attached_pictures(&self) -> &[crate::AttachedPicture] {
         &[]
     }
+
+    /// Structured chapter / cue list. Default returns an empty slice
+    /// for back-compat; demuxers that carry chapters (MKV `Chapters`,
+    /// MP4 chapter track, Ogg `CHAPTERnn=` Vorbis comments, …) should
+    /// override and return [`Chapter`](crate::Chapter) records in
+    /// presentation order. Coexists with the legacy `chapter:N:*`
+    /// flat-metadata keys; new consumers should prefer this.
+    fn chapters(&self) -> &[crate::Chapter] {
+        &[]
+    }
+
+    /// Structured attachment list. Default returns an empty slice for
+    /// back-compat; demuxers that carry attachments (MKV `Attachments`,
+    /// …) should override and return [`Attachment`](crate::Attachment)
+    /// records in container order. Coexists with the legacy
+    /// `attachment:N:*` flat-metadata keys; new consumers should prefer
+    /// this.
+    fn attachments(&self) -> &[crate::Attachment] {
+        &[]
+    }
 }
 
 /// Writes packets into a container.
@@ -309,5 +329,19 @@ mod tests {
                 other
             ),
         }
+    }
+
+    #[test]
+    fn default_chapters_and_attachments_are_empty() {
+        // A demuxer that overrides nothing must compile and return
+        // empty slices for both structured accessors. This is the
+        // back-compat contract that lets every existing demuxer pick
+        // up the new API without source changes.
+        let d = DummyDemuxer;
+        assert!(d.chapters().is_empty());
+        assert!(d.attachments().is_empty());
+        assert!(d.attached_pictures().is_empty());
+        assert!(d.metadata().is_empty());
+        assert_eq!(d.duration_micros(), None);
     }
 }
