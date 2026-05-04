@@ -50,6 +50,55 @@ pub struct VectorFrame {
     pub time_base: TimeBase,
 }
 
+impl VectorFrame {
+    /// Build a `VectorFrame` of the given canvas size with an empty root
+    /// group, no view box, no timestamp, and a `1/1` time base.
+    pub fn new(width: f32, height: f32) -> Self {
+        Self {
+            width,
+            height,
+            view_box: None,
+            root: Group::default(),
+            pts: None,
+            time_base: TimeBase::new(1, 1),
+        }
+    }
+
+    /// Replace the view box.
+    pub fn with_view_box(mut self, view_box: ViewBox) -> Self {
+        self.view_box = Some(view_box);
+        self
+    }
+
+    /// Replace the root group.
+    pub fn with_root(mut self, root: Group) -> Self {
+        self.root = root;
+        self
+    }
+
+    /// Set the presentation timestamp (in `time_base` units).
+    pub fn with_pts(mut self, pts: i64) -> Self {
+        self.pts = Some(pts);
+        self
+    }
+
+    /// Replace the time base.
+    pub fn with_time_base(mut self, time_base: TimeBase) -> Self {
+        self.time_base = time_base;
+        self
+    }
+}
+
+impl Default for VectorFrame {
+    /// An empty 0×0 frame with an empty root group, no view box, no
+    /// timestamp, and a `1/1` time base. Useful as a starting point for
+    /// builder-style construction or as a placeholder in
+    /// `std::mem::take`-style swaps.
+    fn default() -> Self {
+        Self::new(0.0, 0.0)
+    }
+}
+
 /// User-coordinate system rectangle. Mirrors the SVG `viewBox` attribute
 /// and the PDF `MediaBox` / `CropBox` rectangles.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,6 +107,17 @@ pub struct ViewBox {
     pub min_y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+impl ViewBox {
+    pub const fn new(min_x: f32, min_y: f32, width: f32, height: f32) -> Self {
+        Self {
+            min_x,
+            min_y,
+            width,
+            height,
+        }
+    }
 }
 
 /// One node in the scene tree.
@@ -144,6 +204,50 @@ impl Default for Group {
     }
 }
 
+impl Group {
+    /// An empty group: identity transform, opacity `1.0`, no clip, no
+    /// children, no cache key. Same as [`Group::default`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Replace the transform.
+    pub fn with_transform(mut self, transform: Transform2D) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the group opacity in `0.0..=1.0`.
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
+
+    /// Set the clip path.
+    pub fn with_clip(mut self, clip: Path) -> Self {
+        self.clip = Some(clip);
+        self
+    }
+
+    /// Append a child node.
+    pub fn with_child(mut self, child: Node) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Replace the children list wholesale.
+    pub fn with_children(mut self, children: Vec<Node>) -> Self {
+        self.children = children;
+        self
+    }
+
+    /// Set the rasterizer cache key. See [`Group::cache_key`].
+    pub fn with_cache_key(mut self, key: u64) -> Self {
+        self.cache_key = Some(key);
+        self
+    }
+}
+
 /// A drawn path with optional fill and stroke.
 ///
 /// SVG `<path>` and PDF path-painting operators (`f`, `S`, `B`, `f*`,
@@ -156,6 +260,37 @@ pub struct PathNode {
     pub fill: Option<Paint>,
     pub stroke: Option<Stroke>,
     pub fill_rule: FillRule,
+}
+
+impl PathNode {
+    /// Build a `PathNode` with `path`, no fill, no stroke, and
+    /// `FillRule::NonZero`.
+    pub fn new(path: Path) -> Self {
+        Self {
+            path,
+            fill: None,
+            stroke: None,
+            fill_rule: FillRule::NonZero,
+        }
+    }
+
+    /// Set the fill paint.
+    pub fn with_fill(mut self, fill: Paint) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    /// Set the stroke style.
+    pub fn with_stroke(mut self, stroke: Stroke) -> Self {
+        self.stroke = Some(stroke);
+        self
+    }
+
+    /// Set the fill rule.
+    pub fn with_fill_rule(mut self, fill_rule: FillRule) -> Self {
+        self.fill_rule = fill_rule;
+        self
+    }
 }
 
 /// A geometric path expressed as a sequence of drawing commands.
@@ -251,6 +386,18 @@ impl Point {
     }
 }
 
+impl From<[f32; 2]> for Point {
+    fn from([x, y]: [f32; 2]) -> Self {
+        Self { x, y }
+    }
+}
+
+impl From<(f32, f32)> for Point {
+    fn from((x, y): (f32, f32)) -> Self {
+        Self { x, y }
+    }
+}
+
 /// A paint server — what fills the inside of a path or strokes its
 /// outline. The variant set is the SVG/PDF intersection.
 #[derive(Clone, Debug)]
@@ -285,6 +432,32 @@ impl Rgba {
     }
 }
 
+impl From<(u8, u8, u8, u8)> for Rgba {
+    fn from((r, g, b, a): (u8, u8, u8, u8)) -> Self {
+        Self { r, g, b, a }
+    }
+}
+
+impl From<(u8, u8, u8)> for Rgba {
+    /// Fully-opaque color with the given RGB triple.
+    fn from((r, g, b): (u8, u8, u8)) -> Self {
+        Self { r, g, b, a: 255 }
+    }
+}
+
+impl From<[u8; 4]> for Rgba {
+    fn from([r, g, b, a]: [u8; 4]) -> Self {
+        Self { r, g, b, a }
+    }
+}
+
+impl From<Rgba> for Paint {
+    /// Wrap an [`Rgba`] in a `Paint::Solid`.
+    fn from(color: Rgba) -> Self {
+        Paint::Solid(color)
+    }
+}
+
 /// A linear gradient: color stops sweep along the line `start` → `end`.
 #[derive(Clone, Debug)]
 pub struct LinearGradient {
@@ -292,6 +465,37 @@ pub struct LinearGradient {
     pub end: Point,
     pub stops: Vec<GradientStop>,
     pub spread: SpreadMethod,
+}
+
+impl LinearGradient {
+    /// Build a `LinearGradient` from `start` → `end` with no stops and
+    /// `SpreadMethod::Pad`.
+    pub fn new(start: Point, end: Point) -> Self {
+        Self {
+            start,
+            end,
+            stops: Vec::new(),
+            spread: SpreadMethod::Pad,
+        }
+    }
+
+    /// Replace the gradient stops.
+    pub fn with_stops(mut self, stops: Vec<GradientStop>) -> Self {
+        self.stops = stops;
+        self
+    }
+
+    /// Append a single stop.
+    pub fn with_stop(mut self, stop: GradientStop) -> Self {
+        self.stops.push(stop);
+        self
+    }
+
+    /// Set the spread method.
+    pub fn with_spread(mut self, spread: SpreadMethod) -> Self {
+        self.spread = spread;
+        self
+    }
 }
 
 /// A radial gradient: color stops sweep from `focal` outward to a
@@ -304,6 +508,44 @@ pub struct RadialGradient {
     pub focal: Option<Point>,
     pub stops: Vec<GradientStop>,
     pub spread: SpreadMethod,
+}
+
+impl RadialGradient {
+    /// Build a `RadialGradient` centered at `center` with `radius`, no
+    /// focal point, no stops, and `SpreadMethod::Pad`.
+    pub fn new(center: Point, radius: f32) -> Self {
+        Self {
+            center,
+            radius,
+            focal: None,
+            stops: Vec::new(),
+            spread: SpreadMethod::Pad,
+        }
+    }
+
+    /// Set the focal point (defaults to `center` when `None`).
+    pub fn with_focal(mut self, focal: Point) -> Self {
+        self.focal = Some(focal);
+        self
+    }
+
+    /// Replace the gradient stops.
+    pub fn with_stops(mut self, stops: Vec<GradientStop>) -> Self {
+        self.stops = stops;
+        self
+    }
+
+    /// Append a single stop.
+    pub fn with_stop(mut self, stop: GradientStop) -> Self {
+        self.stops.push(stop);
+        self
+    }
+
+    /// Set the spread method.
+    pub fn with_spread(mut self, spread: SpreadMethod) -> Self {
+        self.spread = spread;
+        self
+    }
 }
 
 /// One color stop along a gradient. `offset` is in `0.0..=1.0`.
@@ -358,6 +600,50 @@ impl Stroke {
             dash: None,
         }
     }
+
+    /// Build a stroke with the given `width` and `paint`, and SVG/PDF
+    /// default cap (`Butt`), join (`Miter`), miter limit (`4.0`), and
+    /// no dash pattern.
+    pub fn new(width: f32, paint: Paint) -> Self {
+        Self {
+            width,
+            paint,
+            cap: LineCap::Butt,
+            join: LineJoin::Miter,
+            miter_limit: 4.0,
+            dash: None,
+        }
+    }
+
+    /// Replace the stroke paint.
+    pub fn with_paint(mut self, paint: Paint) -> Self {
+        self.paint = paint;
+        self
+    }
+
+    /// Set the line cap style.
+    pub fn with_cap(mut self, cap: LineCap) -> Self {
+        self.cap = cap;
+        self
+    }
+
+    /// Set the line join style.
+    pub fn with_join(mut self, join: LineJoin) -> Self {
+        self.join = join;
+        self
+    }
+
+    /// Set the miter limit ratio (SVG/PDF default is `4.0`).
+    pub fn with_miter_limit(mut self, miter_limit: f32) -> Self {
+        self.miter_limit = miter_limit;
+        self
+    }
+
+    /// Set the dash pattern.
+    pub fn with_dash(mut self, dash: DashPattern) -> Self {
+        self.dash = Some(dash);
+        self
+    }
 }
 
 /// How an open path's endpoints are drawn.
@@ -385,6 +671,20 @@ pub enum LineJoin {
 pub struct DashPattern {
     pub array: Vec<f32>,
     pub offset: f32,
+}
+
+impl DashPattern {
+    /// Build a dash pattern with the given lengths and a `0.0` phase
+    /// offset.
+    pub fn new(array: Vec<f32>) -> Self {
+        Self { array, offset: 0.0 }
+    }
+
+    /// Set the phase offset from the path start.
+    pub fn with_offset(mut self, offset: f32) -> Self {
+        self.offset = offset;
+        self
+    }
 }
 
 /// Fill rule for self-intersecting and compound paths. Matches SVG's
@@ -552,6 +852,17 @@ pub struct Rect {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+impl Rect {
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -782,5 +1093,250 @@ mod tests {
     #[test]
     fn mask_kind_default_is_luminance() {
         assert_eq!(MaskKind::default(), MaskKind::Luminance);
+    }
+
+    #[test]
+    fn vector_frame_default_is_empty_zero_size() {
+        let f = VectorFrame::default();
+        assert_eq!(f.width, 0.0);
+        assert_eq!(f.height, 0.0);
+        assert!(f.view_box.is_none());
+        assert!(f.root.children.is_empty());
+        assert!(f.pts.is_none());
+        assert_eq!(f.time_base, TimeBase::new(1, 1));
+    }
+
+    #[test]
+    fn vector_frame_new_sets_canvas_size() {
+        let f = VectorFrame::new(640.0, 480.0);
+        assert_eq!(f.width, 640.0);
+        assert_eq!(f.height, 480.0);
+        assert!(f.view_box.is_none());
+        assert!(f.root.children.is_empty());
+        assert!(f.pts.is_none());
+    }
+
+    #[test]
+    fn vector_frame_builder_chain() {
+        let vb = ViewBox::new(0.0, 0.0, 100.0, 100.0);
+        let f = VectorFrame::new(100.0, 100.0)
+            .with_view_box(vb)
+            .with_pts(42)
+            .with_time_base(TimeBase::new(1, 90_000));
+        assert_eq!(f.view_box, Some(vb));
+        assert_eq!(f.pts, Some(42));
+        assert_eq!(f.time_base, TimeBase::new(1, 90_000));
+    }
+
+    #[test]
+    fn vector_frame_with_root_replaces_root() {
+        let root = Group::new().with_opacity(0.5);
+        let f = VectorFrame::new(10.0, 10.0).with_root(root);
+        assert_eq!(f.root.opacity, 0.5);
+    }
+
+    #[test]
+    fn view_box_new_round_trips_fields() {
+        let vb = ViewBox::new(1.0, 2.0, 3.0, 4.0);
+        assert_eq!(vb.min_x, 1.0);
+        assert_eq!(vb.min_y, 2.0);
+        assert_eq!(vb.width, 3.0);
+        assert_eq!(vb.height, 4.0);
+    }
+
+    #[test]
+    fn rect_new_round_trips_fields() {
+        let r = Rect::new(1.0, 2.0, 3.0, 4.0);
+        assert_eq!(r.x, 1.0);
+        assert_eq!(r.y, 2.0);
+        assert_eq!(r.width, 3.0);
+        assert_eq!(r.height, 4.0);
+    }
+
+    #[test]
+    fn group_new_matches_default() {
+        let a = Group::new();
+        let b = Group::default();
+        assert!(a.transform.is_identity());
+        assert_eq!(a.opacity, b.opacity);
+        assert!(a.clip.is_none());
+        assert_eq!(a.children.len(), b.children.len());
+        assert_eq!(a.cache_key, b.cache_key);
+    }
+
+    #[test]
+    fn group_builder_chain() {
+        let mut clip = Path::new();
+        clip.move_to(Point::new(0.0, 0.0))
+            .line_to(Point::new(1.0, 1.0))
+            .close();
+        let g = Group::new()
+            .with_transform(Transform2D::translate(5.0, 7.0))
+            .with_opacity(0.25)
+            .with_clip(clip)
+            .with_cache_key(0xdead_beef);
+        assert_eq!(g.transform, Transform2D::translate(5.0, 7.0));
+        assert_eq!(g.opacity, 0.25);
+        assert!(g.clip.is_some());
+        assert_eq!(g.cache_key, Some(0xdead_beef));
+    }
+
+    #[test]
+    fn group_with_child_appends() {
+        let g = Group::new()
+            .with_child(Node::Group(Group::new()))
+            .with_child(Node::Group(Group::new().with_opacity(0.5)));
+        assert_eq!(g.children.len(), 2);
+        match &g.children[1] {
+            Node::Group(inner) => assert_eq!(inner.opacity, 0.5),
+            _ => panic!("expected Group child"),
+        }
+    }
+
+    #[test]
+    fn group_with_children_replaces_list() {
+        let g = Group::new()
+            .with_child(Node::Group(Group::new()))
+            .with_children(vec![Node::Group(Group::new().with_opacity(0.1))]);
+        assert_eq!(g.children.len(), 1);
+        match &g.children[0] {
+            Node::Group(inner) => assert_eq!(inner.opacity, 0.1),
+            _ => panic!("expected Group child"),
+        }
+    }
+
+    #[test]
+    fn path_node_new_then_builder() {
+        let mut p = Path::new();
+        p.move_to(Point::new(0.0, 0.0))
+            .line_to(Point::new(10.0, 0.0));
+        let n = PathNode::new(p)
+            .with_fill(Paint::Solid(Rgba::opaque(255, 0, 0)))
+            .with_stroke(Stroke::solid(1.0, Rgba::opaque(0, 0, 0)))
+            .with_fill_rule(FillRule::EvenOdd);
+        assert!(n.fill.is_some());
+        assert!(n.stroke.is_some());
+        assert_eq!(n.fill_rule, FillRule::EvenOdd);
+    }
+
+    #[test]
+    fn path_node_new_defaults() {
+        let n = PathNode::new(Path::new());
+        assert!(n.fill.is_none());
+        assert!(n.stroke.is_none());
+        assert_eq!(n.fill_rule, FillRule::NonZero);
+    }
+
+    #[test]
+    fn point_from_array_and_tuple() {
+        let p1: Point = [1.0_f32, 2.0_f32].into();
+        let p2: Point = (3.0_f32, 4.0_f32).into();
+        assert_eq!(p1, Point::new(1.0, 2.0));
+        assert_eq!(p2, Point::new(3.0, 4.0));
+    }
+
+    #[test]
+    fn rgba_from_tuples_and_array() {
+        let a: Rgba = (10u8, 20u8, 30u8, 40u8).into();
+        let b: Rgba = (50u8, 60u8, 70u8).into();
+        let c: Rgba = [1u8, 2u8, 3u8, 4u8].into();
+        assert_eq!(a, Rgba::new(10, 20, 30, 40));
+        assert_eq!(b, Rgba::opaque(50, 60, 70));
+        assert_eq!(c, Rgba::new(1, 2, 3, 4));
+    }
+
+    #[test]
+    fn paint_from_rgba_wraps_solid() {
+        let p: Paint = Rgba::opaque(1, 2, 3).into();
+        match p {
+            Paint::Solid(c) => assert_eq!(c, Rgba::opaque(1, 2, 3)),
+            _ => panic!("expected Paint::Solid"),
+        }
+    }
+
+    #[test]
+    fn linear_gradient_new_then_builder() {
+        let g = LinearGradient::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0))
+            .with_stop(GradientStop::new(0.0, Rgba::opaque(0, 0, 0)))
+            .with_stop(GradientStop::new(1.0, Rgba::opaque(255, 255, 255)))
+            .with_spread(SpreadMethod::Reflect);
+        assert_eq!(g.start, Point::new(0.0, 0.0));
+        assert_eq!(g.end, Point::new(1.0, 0.0));
+        assert_eq!(g.stops.len(), 2);
+        assert_eq!(g.spread, SpreadMethod::Reflect);
+    }
+
+    #[test]
+    fn linear_gradient_with_stops_replaces() {
+        let g = LinearGradient::new(Point::new(0.0, 0.0), Point::new(1.0, 0.0))
+            .with_stop(GradientStop::new(0.5, Rgba::opaque(0, 0, 0)))
+            .with_stops(vec![GradientStop::new(0.0, Rgba::opaque(1, 1, 1))]);
+        assert_eq!(g.stops.len(), 1);
+        assert_eq!(g.stops[0].offset, 0.0);
+    }
+
+    #[test]
+    fn radial_gradient_new_then_builder() {
+        let g = RadialGradient::new(Point::new(5.0, 5.0), 10.0)
+            .with_focal(Point::new(4.0, 4.0))
+            .with_stop(GradientStop::new(0.0, Rgba::opaque(0, 0, 0)))
+            .with_spread(SpreadMethod::Repeat);
+        assert_eq!(g.center, Point::new(5.0, 5.0));
+        assert_eq!(g.radius, 10.0);
+        assert_eq!(g.focal, Some(Point::new(4.0, 4.0)));
+        assert_eq!(g.stops.len(), 1);
+        assert_eq!(g.spread, SpreadMethod::Repeat);
+    }
+
+    #[test]
+    fn radial_gradient_with_stops_replaces() {
+        let g = RadialGradient::new(Point::new(0.0, 0.0), 1.0)
+            .with_stop(GradientStop::new(0.5, Rgba::opaque(0, 0, 0)))
+            .with_stops(vec![GradientStop::new(1.0, Rgba::opaque(1, 1, 1))]);
+        assert_eq!(g.stops.len(), 1);
+        assert_eq!(g.stops[0].offset, 1.0);
+    }
+
+    #[test]
+    fn stroke_new_defaults() {
+        let s = Stroke::new(3.0, Paint::Solid(Rgba::opaque(0, 0, 0)));
+        assert_eq!(s.width, 3.0);
+        assert_eq!(s.cap, LineCap::Butt);
+        assert_eq!(s.join, LineJoin::Miter);
+        assert_eq!(s.miter_limit, 4.0);
+        assert!(s.dash.is_none());
+    }
+
+    #[test]
+    fn stroke_builder_chain() {
+        let s = Stroke::solid(1.0, Rgba::opaque(0, 0, 0))
+            .with_cap(LineCap::Round)
+            .with_join(LineJoin::Bevel)
+            .with_miter_limit(10.0)
+            .with_dash(DashPattern::new(vec![2.0, 1.0]).with_offset(0.5))
+            .with_paint(Paint::Solid(Rgba::opaque(128, 128, 128)));
+        assert_eq!(s.cap, LineCap::Round);
+        assert_eq!(s.join, LineJoin::Bevel);
+        assert_eq!(s.miter_limit, 10.0);
+        let d = s.dash.expect("dash set");
+        assert_eq!(d.array, vec![2.0, 1.0]);
+        assert_eq!(d.offset, 0.5);
+        match s.paint {
+            Paint::Solid(c) => assert_eq!(c, Rgba::opaque(128, 128, 128)),
+            _ => panic!("expected Paint::Solid"),
+        }
+    }
+
+    #[test]
+    fn dash_pattern_new_zero_offset() {
+        let d = DashPattern::new(vec![1.0, 2.0, 3.0]);
+        assert_eq!(d.array, vec![1.0, 2.0, 3.0]);
+        assert_eq!(d.offset, 0.0);
+    }
+
+    #[test]
+    fn dash_pattern_with_offset_sets_phase() {
+        let d = DashPattern::new(vec![1.0]).with_offset(0.25);
+        assert_eq!(d.offset, 0.25);
     }
 }

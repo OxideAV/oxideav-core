@@ -24,6 +24,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `content` subtree is then composited under that coverage. Matches
   the SVG semantics where a `<mask>` rasterises into a 1-channel
   bitmap that multiplies the masked content's per-pixel alpha.
+- `vector::VectorFrame::default()` — empty 0×0 frame with default root
+  group, no view box, no timestamp, and a `1/1` time base. Useful for
+  builder-style construction or as a `std::mem::take` placeholder.
+- DX wins on the `vector` module — purely additive convenience
+  constructors and builder-style chainable setters. No existing field,
+  signature, or behaviour changed.
+  - inherent `new()` constructors: `VectorFrame::new(width, height)`,
+    `Group::new()`, `PathNode::new(path)`, `LinearGradient::new(start, end)`,
+    `RadialGradient::new(center, radius)`, `Stroke::new(width, paint)`,
+    `DashPattern::new(array)`, `ViewBox::new(min_x, min_y, w, h)`,
+    `Rect::new(x, y, w, h)`.
+  - `with_*` builders that take `self` and return `Self`:
+    `VectorFrame::{with_view_box, with_root, with_pts, with_time_base}`,
+    `Group::{with_transform, with_opacity, with_clip, with_child,
+    with_children, with_cache_key}`,
+    `PathNode::{with_fill, with_stroke, with_fill_rule}`,
+    `LinearGradient::{with_stops, with_stop, with_spread}`,
+    `RadialGradient::{with_focal, with_stops, with_stop, with_spread}`,
+    `Stroke::{with_paint, with_cap, with_join, with_miter_limit, with_dash}`,
+    `DashPattern::with_offset`.
+  - `From` conversions: `From<[f32; 2]>` and `From<(f32, f32)>` for
+    `Point`; `From<(u8, u8, u8, u8)>`, `From<(u8, u8, u8)>`, and
+    `From<[u8; 4]>` for `Rgba`; `From<Rgba>` for `Paint` (wraps in
+    `Paint::Solid`).
 
 ## [0.1.15](https://github.com/OxideAV/oxideav-core/compare/v0.1.14...v0.1.15) - 2026-05-03
 
