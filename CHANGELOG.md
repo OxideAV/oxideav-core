@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.21](https://github.com/OxideAV/oxideav-core/compare/v0.1.20...v0.1.21) - 2026-05-05
+
+### Other
+
+- apply cargo fmt to registry/codec.rs (rustfmt CI fix)
+- trim core API to registration + first-match lookups; selection policy moves to oxideav-pipeline
+
 ## [0.1.20](https://github.com/OxideAV/oxideav-core/compare/v0.1.19...v0.1.20) - 2026-05-05
 
 ### Other
