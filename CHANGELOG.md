@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `engine` module with `HwDeviceInfo`, `HwCodecCaps`, and
+  `EngineProbeFn` (a `fn() -> Vec<HwDeviceInfo>` alias). Public types
+  the HW-accel sibling crates use to describe per-device capability
+  matrices.
+- `CodecInfo::engine_id: Option<&'static str>` + `with_engine_id(&'static str)`
+  builder method. Set by HW siblings to identify which backend a codec
+  entry came from; consumers (CLI `info` command) group + dedupe by it.
+- `CodecInfo::engine_probe: Option<EngineProbeFn>` + `with_engine_probe(fn)`
+  builder method. Lets a HW sibling attach a probe function the consumer
+  calls on demand to enumerate the backend's devices.
+- Tests covering type roundtrip + the new `CodecInfo` builders.
+
+### Notes
+
+- No distributed slice, no macro: engine info travels with each
+  `CodecInfo`, matching the explicit-calls pattern already used by
+  `oxideav-meta`'s `register_all`.
+
 ## [0.1.21](https://github.com/OxideAV/oxideav-core/compare/v0.1.20...v0.1.21) - 2026-05-05
 
 ### Other

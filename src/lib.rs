@@ -9,6 +9,7 @@
 pub mod arena;
 pub mod bits;
 pub mod capabilities;
+pub mod engine;
 pub mod error;
 pub mod execution;
 pub mod filter;
@@ -27,6 +28,7 @@ pub mod time;
 pub mod vector;
 
 pub use capabilities::{CodecCapabilities, DEFAULT_PRIORITY};
+pub use engine::{EngineProbeFn, HwCodecCaps, HwDeviceInfo};
 pub use error::{Error, Result};
 pub use execution::ExecutionContext;
 pub use filter::{FilterContext, PortParams, PortSpec, StreamFilter};

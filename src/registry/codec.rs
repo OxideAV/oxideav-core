@@ -252,6 +252,22 @@ pub struct CodecInfo {
     pub encoder_options_schema: Option<&'static [OptionField]>,
     /// Schema of the decoder's recognised option keys.
     pub decoder_options_schema: Option<&'static [OptionField]>,
+    /// HW backend identifier, e.g. `"nvidia"`, `"vaapi"`, `"vdpau"`,
+    /// `"vulkan-video"`, `"videotoolbox"`. Set by HW siblings on every
+    /// `CodecInfo` they register; SW codecs leave this `None`.
+    /// Consumers (e.g. the CLI's `info` command) use it to group
+    /// codec entries by backend and to dedupe probe calls — multiple
+    /// `CodecInfo` entries with the same `engine_id` typically share
+    /// an `engine_probe` function, and consumers should call the probe
+    /// at most once per `engine_id` per pass. Attached via
+    /// [`Self::with_engine_id`].
+    pub engine_id: Option<&'static str>,
+    /// Optional engine probe function. When `Some`, calling it returns
+    /// one [`crate::engine::HwDeviceInfo`] entry per device the backend
+    /// sees. Phase-2 HW siblings populate this on every `CodecInfo`
+    /// they register; Phase-3 consumers (CLI) call it on demand.
+    /// Attached via [`Self::with_engine_probe`].
+    pub engine_probe: Option<crate::engine::EngineProbeFn>,
 }
 
 impl CodecInfo {
@@ -269,6 +285,8 @@ impl CodecInfo {
             tags: Vec::new(),
             encoder_options_schema: None,
             decoder_options_schema: None,
+            engine_id: None,
+            engine_probe: None,
         }
     }
 
@@ -326,6 +344,26 @@ impl CodecInfo {
     /// See [`Self::encoder_options`] for the encoder counterpart.
     pub fn decoder_options<T: CodecOptionsStruct>(mut self) -> Self {
         self.decoder_options_schema = Some(T::SCHEMA);
+        self
+    }
+
+    /// Tag this codec as belonging to a HW backend identified by
+    /// `engine_id`. Should match the `engine_id` of every other
+    /// `CodecInfo` registered by the same backend, and the corresponding
+    /// `engine_id` field used by the CLI for grouping. SW codecs leave
+    /// this unset.
+    pub fn with_engine_id(mut self, engine_id: &'static str) -> Self {
+        self.engine_id = Some(engine_id);
+        self
+    }
+
+    /// Attach a probe function. Consumers call it to enumerate the
+    /// engines (devices) this backend can dispatch to. Probes are
+    /// expected to be idempotent and side-effect free; consumers may
+    /// call them more than once per process and should dedupe by
+    /// [`Self::engine_id`].
+    pub fn with_engine_probe(mut self, probe: crate::engine::EngineProbeFn) -> Self {
+        self.engine_probe = Some(probe);
         self
     }
 }
@@ -393,6 +431,15 @@ impl CodecRegistry {
             tags,
             encoder_options_schema,
             decoder_options_schema,
+            // engine_id / engine_probe are metadata attached to a
+            // CodecInfo for backends that want consumers (CLI `info`)
+            // to enumerate the underlying devices on demand. The
+            // registry itself doesn't currently key on them — they're
+            // passed through whole when the registration is recorded
+            // in `registrations` (left out of `RegistrationRecord`
+            // until a consumer needs them).
+            engine_id: _,
+            engine_probe: _,
         } = info;
 
         let caps = {
@@ -828,5 +875,56 @@ mod tag_tests {
                 "tag {t:?} did not resolve",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+    use crate::engine::HwDeviceInfo;
+
+    #[test]
+    fn codec_info_engine_id_and_probe_default_to_none() {
+        let ci = CodecInfo::new(CodecId::new("h264"));
+        assert!(ci.engine_id.is_none());
+        assert!(ci.engine_probe.is_none());
+    }
+
+    #[test]
+    fn codec_info_engine_builder_methods_set_fields() {
+        fn dummy_probe() -> Vec<HwDeviceInfo> {
+            vec![]
+        }
+        let ci = CodecInfo::new(CodecId::new("h264"))
+            .with_engine_id("nvidia")
+            .with_engine_probe(dummy_probe);
+        assert_eq!(ci.engine_id, Some("nvidia"));
+        assert!(ci.engine_probe.is_some());
+        let probe = ci.engine_probe.unwrap();
+        let result = probe();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn registering_codec_with_engine_metadata_does_not_panic() {
+        // The new fields are passthrough metadata — register() should
+        // accept them without affecting existing id/tag bookkeeping.
+        fn dummy_probe() -> Vec<HwDeviceInfo> {
+            vec![]
+        }
+        let mut reg = CodecRegistry::new();
+        reg.register(
+            CodecInfo::new(CodecId::new("h264"))
+                .capabilities(CodecCapabilities::audio("h264_nvdec"))
+                .tag(CodecTag::fourcc(b"H264"))
+                .with_engine_id("nvidia")
+                .with_engine_probe(dummy_probe),
+        );
+        let t = CodecTag::fourcc(b"H264");
+        assert_eq!(
+            reg.resolve_tag_ref(&ProbeContext::new(&t))
+                .map(|c| c.as_str()),
+            Some("h264"),
+        );
     }
 }
