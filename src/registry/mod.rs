@@ -8,7 +8,10 @@ pub mod codec;
 pub mod container;
 pub mod context;
 pub mod filter;
+pub mod slice;
 pub mod source;
+
+pub use slice::{Registrar, REGISTRARS};
 
 pub use codec::{
     CodecImplementation, CodecInfo, CodecRegistry, Decoder, DecoderFactory, Encoder, EncoderFactory,
