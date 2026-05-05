@@ -184,83 +184,40 @@ impl fmt::Display for CodecCapabilities {
     }
 }
 
-/// User preferences for codec selection — pass to the registry's resolve
-/// methods to bias / restrict the choice.
-#[derive(Clone, Debug, Default)]
-pub struct CodecPreferences {
-    /// Implementation names to prefer (boost their priority by `boost`).
-    pub prefer: Vec<String>,
-    /// Implementation names to skip entirely.
-    pub exclude: Vec<String>,
-    /// Forbid hardware-accelerated impls. Mutually exclusive with
-    /// `require_hardware` — if both are set, no impl is selectable.
-    pub no_hardware: bool,
-    /// Forbid software-only impls — only hardware-accelerated factories
-    /// are considered. The registry's normal init-time fallback (try
-    /// next priority on factory `Err`) still applies *within* the HW
-    /// candidate set, but it will NOT silently degrade to the SW path
-    /// if every HW factory fails. Use this when the pipeline needs
-    /// hardware (real-time low-latency capture, energy budget, etc.) —
-    /// the resulting `make_decoder_with` / `make_encoder_with` will
-    /// surface the underlying `OSStatus` / device error.
-    pub require_hardware: bool,
-    /// Boost amount for `prefer` impls (subtracted from priority).
-    pub boost: i32,
-}
-
-impl CodecPreferences {
-    pub fn excludes(&self, caps: &CodecCapabilities) -> bool {
-        self.exclude.iter().any(|n| n == &caps.implementation)
-            || (self.no_hardware && caps.hardware_accelerated)
-            || (self.require_hardware && !caps.hardware_accelerated)
-    }
-
-    pub fn effective_priority(&self, caps: &CodecCapabilities) -> i32 {
-        if self.prefer.iter().any(|n| n == &caps.implementation) {
-            caps.priority - self.boost.max(0)
-        } else {
-            caps.priority
+impl CodecCapabilities {
+    /// Whether this implementation's max-* restrictions are compatible
+    /// with the requested codec parameters. `for_encode` is reserved
+    /// for restrictions that apply asymmetrically. Used by the
+    /// registry's `make_decoder` / `make_encoder` walker and by
+    /// out-of-tree selection layers (e.g. `oxideav-pipeline`'s
+    /// `CodecPreferences` filter).
+    pub fn fits_params(&self, p: &crate::CodecParameters, for_encode: bool) -> bool {
+        let _ = for_encode;
+        if let (Some(max), Some(w)) = (self.max_width, p.width) {
+            if w > max {
+                return false;
+            }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn caps(name: &str, hw: bool) -> CodecCapabilities {
-        CodecCapabilities::audio(name).with_hardware(hw)
-    }
-
-    #[test]
-    fn no_hardware_excludes_hw_only() {
-        let prefs = CodecPreferences {
-            no_hardware: true,
-            ..Default::default()
-        };
-        assert!(prefs.excludes(&caps("aac_audiotoolbox", true)));
-        assert!(!prefs.excludes(&caps("aac_sw", false)));
-    }
-
-    #[test]
-    fn require_hardware_excludes_sw_only() {
-        let prefs = CodecPreferences {
-            require_hardware: true,
-            ..Default::default()
-        };
-        assert!(!prefs.excludes(&caps("aac_audiotoolbox", true)));
-        assert!(prefs.excludes(&caps("aac_sw", false)));
-    }
-
-    #[test]
-    fn no_hardware_and_require_hardware_excludes_everything() {
-        // Mutually-exclusive nonsense config — nothing is selectable.
-        let prefs = CodecPreferences {
-            no_hardware: true,
-            require_hardware: true,
-            ..Default::default()
-        };
-        assert!(prefs.excludes(&caps("aac_audiotoolbox", true)));
-        assert!(prefs.excludes(&caps("aac_sw", false)));
+        if let (Some(max), Some(h)) = (self.max_height, p.height) {
+            if h > max {
+                return false;
+            }
+        }
+        if let (Some(max), Some(br)) = (self.max_bitrate, p.bit_rate) {
+            if br > max {
+                return false;
+            }
+        }
+        if let (Some(max), Some(sr)) = (self.max_sample_rate, p.sample_rate) {
+            if sr > max {
+                return false;
+            }
+        }
+        if let (Some(max), Some(ch)) = (self.max_channels, p.channels) {
+            if ch > max {
+                return false;
+            }
+        }
+        true
     }
 }

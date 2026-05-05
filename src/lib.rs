@@ -26,7 +26,7 @@ pub mod subtitle;
 pub mod time;
 pub mod vector;
 
-pub use capabilities::{CodecCapabilities, CodecPreferences, DEFAULT_PRIORITY};
+pub use capabilities::{CodecCapabilities, DEFAULT_PRIORITY};
 pub use error::{Error, Result};
 pub use execution::ExecutionContext;
 pub use filter::{FilterContext, PortParams, PortSpec, StreamFilter};

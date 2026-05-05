@@ -25,7 +25,7 @@ use std::collections::HashMap;
 
 use crate::arena;
 use crate::{
-    CodecCapabilities, CodecId, CodecOptionsStruct, CodecParameters, CodecPreferences,
+    CodecCapabilities, CodecId, CodecOptionsStruct, CodecParameters,
     CodecResolver, CodecTag, Error, ExecutionContext, Frame, OptionField, Packet, PixelFormat,
     ProbeContext, ProbeFn, Result,
 };
@@ -447,79 +447,89 @@ impl CodecRegistry {
             .unwrap_or(false)
     }
 
-    /// Build a decoder for `params`. Walks all implementations matching the
-    /// codec id in increasing priority order, skipping any excluded by the
-    /// caller's preferences. Init-time fallback: if a higher-priority impl's
-    /// constructor returns an error, the next candidate is tried.
-    pub fn make_decoder_with(
+    /// First registered decoder factory for `params.codec_id`, invoked
+    /// with `params`. No priority walk, no preference filter, no
+    /// init-time fallback to a lower-priority impl. Errors if no
+    /// decoder is registered for the codec.
+    ///
+    /// Intended for single-impl scenarios — typically a codec crate's
+    /// own self-tests, where exactly one impl has been registered into
+    /// a freshly-constructed registry. Production callers selecting
+    /// among multiple candidates (e.g. h264_sw vs h264_videotoolbox)
+    /// should use `oxideav_pipeline::make_decoder_with` instead, which
+    /// applies `CodecPreferences` and walks priorities.
+    pub fn first_decoder(&self, params: &CodecParameters) -> Result<Box<dyn Decoder>> {
+        let imp = self
+            .implementations(&params.codec_id)
+            .iter()
+            .find(|i| i.make_decoder.is_some())
+            .ok_or_else(|| {
+                Error::CodecNotFound(format!("no decoder for codec {}", params.codec_id))
+            })?;
+        (imp.make_decoder.expect("checked above"))(params)
+    }
+
+    /// First registered encoder factory — see [`first_decoder`].
+    ///
+    /// [`first_decoder`]: Self::first_decoder
+    pub fn first_encoder(&self, params: &CodecParameters) -> Result<Box<dyn Encoder>> {
+        let imp = self
+            .implementations(&params.codec_id)
+            .iter()
+            .find(|i| i.make_encoder.is_some())
+            .ok_or_else(|| {
+                Error::CodecNotFound(format!("no encoder for codec {}", params.codec_id))
+            })?;
+        (imp.make_encoder.expect("checked above"))(params)
+    }
+
+    /// Look up a decoder by exact implementation name
+    /// (`"h264_sw"`, `"aac_audiotoolbox"`, ...). Errors if the impl
+    /// isn't registered or if it has no decoder factory.
+    pub fn decoder_by_impl(
         &self,
+        impl_name: &str,
         params: &CodecParameters,
-        prefs: &CodecPreferences,
     ) -> Result<Box<dyn Decoder>> {
-        let candidates = self
-            .impls
-            .get(&params.codec_id)
-            .ok_or_else(|| Error::CodecNotFound(params.codec_id.to_string()))?;
-        let mut ranked: Vec<&CodecImplementation> = candidates
+        let imp = self
+            .implementations(&params.codec_id)
             .iter()
-            .filter(|i| i.make_decoder.is_some() && !prefs.excludes(&i.caps))
-            .filter(|i| caps_fit_params(&i.caps, params, false))
-            .collect();
-        ranked.sort_by_key(|i| prefs.effective_priority(&i.caps));
-        let mut last_err: Option<Error> = None;
-        for imp in ranked {
-            match (imp.make_decoder.unwrap())(params) {
-                Ok(d) => return Ok(d),
-                Err(e) => last_err = Some(e),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| {
-            Error::CodecNotFound(format!(
-                "no decoder for {} accepts the requested parameters",
-                params.codec_id
-            ))
-        }))
+            .find(|i| i.caps.implementation == impl_name)
+            .ok_or_else(|| {
+                Error::CodecNotFound(format!(
+                    "no implementation `{impl_name}` for codec {}",
+                    params.codec_id
+                ))
+            })?;
+        let factory = imp.make_decoder.ok_or_else(|| {
+            Error::CodecNotFound(format!("`{impl_name}` is encoder-only"))
+        })?;
+        factory(params)
     }
 
-    /// Build an encoder, with the same priority + fallback semantics.
-    pub fn make_encoder_with(
+    /// Look up an encoder by exact implementation name — see
+    /// [`decoder_by_impl`].
+    ///
+    /// [`decoder_by_impl`]: Self::decoder_by_impl
+    pub fn encoder_by_impl(
         &self,
+        impl_name: &str,
         params: &CodecParameters,
-        prefs: &CodecPreferences,
     ) -> Result<Box<dyn Encoder>> {
-        let candidates = self
-            .impls
-            .get(&params.codec_id)
-            .ok_or_else(|| Error::CodecNotFound(params.codec_id.to_string()))?;
-        let mut ranked: Vec<&CodecImplementation> = candidates
+        let imp = self
+            .implementations(&params.codec_id)
             .iter()
-            .filter(|i| i.make_encoder.is_some() && !prefs.excludes(&i.caps))
-            .filter(|i| caps_fit_params(&i.caps, params, true))
-            .collect();
-        ranked.sort_by_key(|i| prefs.effective_priority(&i.caps));
-        let mut last_err: Option<Error> = None;
-        for imp in ranked {
-            match (imp.make_encoder.unwrap())(params) {
-                Ok(e) => return Ok(e),
-                Err(e) => last_err = Some(e),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| {
-            Error::CodecNotFound(format!(
-                "no encoder for {} accepts the requested parameters",
-                params.codec_id
-            ))
-        }))
-    }
-
-    /// Default-preference shorthand for `make_decoder_with`.
-    pub fn make_decoder(&self, params: &CodecParameters) -> Result<Box<dyn Decoder>> {
-        self.make_decoder_with(params, &CodecPreferences::default())
-    }
-
-    /// Default-preference shorthand for `make_encoder_with`.
-    pub fn make_encoder(&self, params: &CodecParameters) -> Result<Box<dyn Encoder>> {
-        self.make_encoder_with(params, &CodecPreferences::default())
+            .find(|i| i.caps.implementation == impl_name)
+            .ok_or_else(|| {
+                Error::CodecNotFound(format!(
+                    "no implementation `{impl_name}` for codec {}",
+                    params.codec_id
+                ))
+            })?;
+        let factory = imp.make_encoder.ok_or_else(|| {
+            Error::CodecNotFound(format!("`{impl_name}` is decoder-only"))
+        })?;
+        factory(params)
     }
 
     /// Iterate codec ids that have at least one decoder implementation.
@@ -619,38 +629,6 @@ impl CodecResolver for CodecRegistry {
     }
 }
 
-/// Check whether an implementation's restrictions are compatible with the
-/// requested codec parameters. `for_encode` swaps the rare cases where a
-/// restriction only applies one way.
-fn caps_fit_params(caps: &CodecCapabilities, p: &CodecParameters, for_encode: bool) -> bool {
-    let _ = for_encode; // reserved for future use (e.g. encode-only bitrate caps)
-    if let (Some(max), Some(w)) = (caps.max_width, p.width) {
-        if w > max {
-            return false;
-        }
-    }
-    if let (Some(max), Some(h)) = (caps.max_height, p.height) {
-        if h > max {
-            return false;
-        }
-    }
-    if let (Some(max), Some(br)) = (caps.max_bitrate, p.bit_rate) {
-        if br > max {
-            return false;
-        }
-    }
-    if let (Some(max), Some(sr)) = (caps.max_sample_rate, p.sample_rate) {
-        if sr > max {
-            return false;
-        }
-    }
-    if let (Some(max), Some(ch)) = (caps.max_channels, p.channels) {
-        if ch > max {
-            return false;
-        }
-    }
-    true
-}
 
 #[cfg(test)]
 mod tag_tests {
