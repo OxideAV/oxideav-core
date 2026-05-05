@@ -25,9 +25,9 @@ use std::collections::HashMap;
 
 use crate::arena;
 use crate::{
-    CodecCapabilities, CodecId, CodecOptionsStruct, CodecParameters,
-    CodecResolver, CodecTag, Error, ExecutionContext, Frame, OptionField, Packet, PixelFormat,
-    ProbeContext, ProbeFn, Result,
+    CodecCapabilities, CodecId, CodecOptionsStruct, CodecParameters, CodecResolver, CodecTag,
+    Error, ExecutionContext, Frame, OptionField, Packet, PixelFormat, ProbeContext, ProbeFn,
+    Result,
 };
 
 // ───────────────────────── codec traits ─────────────────────────
@@ -501,9 +501,9 @@ impl CodecRegistry {
                     params.codec_id
                 ))
             })?;
-        let factory = imp.make_decoder.ok_or_else(|| {
-            Error::CodecNotFound(format!("`{impl_name}` is encoder-only"))
-        })?;
+        let factory = imp
+            .make_decoder
+            .ok_or_else(|| Error::CodecNotFound(format!("`{impl_name}` is encoder-only")))?;
         factory(params)
     }
 
@@ -526,9 +526,9 @@ impl CodecRegistry {
                     params.codec_id
                 ))
             })?;
-        let factory = imp.make_encoder.ok_or_else(|| {
-            Error::CodecNotFound(format!("`{impl_name}` is decoder-only"))
-        })?;
+        let factory = imp
+            .make_encoder
+            .ok_or_else(|| Error::CodecNotFound(format!("`{impl_name}` is decoder-only")))?;
         factory(params)
     }
 
@@ -628,7 +628,6 @@ impl CodecResolver for CodecRegistry {
         self.resolve_tag_ref(ctx).cloned()
     }
 }
-
 
 #[cfg(test)]
 mod tag_tests {
