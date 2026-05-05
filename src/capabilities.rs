@@ -192,8 +192,18 @@ pub struct CodecPreferences {
     pub prefer: Vec<String>,
     /// Implementation names to skip entirely.
     pub exclude: Vec<String>,
-    /// Forbid hardware-accelerated impls.
+    /// Forbid hardware-accelerated impls. Mutually exclusive with
+    /// `require_hardware` — if both are set, no impl is selectable.
     pub no_hardware: bool,
+    /// Forbid software-only impls — only hardware-accelerated factories
+    /// are considered. The registry's normal init-time fallback (try
+    /// next priority on factory `Err`) still applies *within* the HW
+    /// candidate set, but it will NOT silently degrade to the SW path
+    /// if every HW factory fails. Use this when the pipeline needs
+    /// hardware (real-time low-latency capture, energy budget, etc.) —
+    /// the resulting `make_decoder_with` / `make_encoder_with` will
+    /// surface the underlying `OSStatus` / device error.
+    pub require_hardware: bool,
     /// Boost amount for `prefer` impls (subtracted from priority).
     pub boost: i32,
 }
@@ -202,6 +212,7 @@ impl CodecPreferences {
     pub fn excludes(&self, caps: &CodecCapabilities) -> bool {
         self.exclude.iter().any(|n| n == &caps.implementation)
             || (self.no_hardware && caps.hardware_accelerated)
+            || (self.require_hardware && !caps.hardware_accelerated)
     }
 
     pub fn effective_priority(&self, caps: &CodecCapabilities) -> i32 {
@@ -210,5 +221,46 @@ impl CodecPreferences {
         } else {
             caps.priority
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn caps(name: &str, hw: bool) -> CodecCapabilities {
+        CodecCapabilities::audio(name).with_hardware(hw)
+    }
+
+    #[test]
+    fn no_hardware_excludes_hw_only() {
+        let prefs = CodecPreferences {
+            no_hardware: true,
+            ..Default::default()
+        };
+        assert!(prefs.excludes(&caps("aac_audiotoolbox", true)));
+        assert!(!prefs.excludes(&caps("aac_sw", false)));
+    }
+
+    #[test]
+    fn require_hardware_excludes_sw_only() {
+        let prefs = CodecPreferences {
+            require_hardware: true,
+            ..Default::default()
+        };
+        assert!(!prefs.excludes(&caps("aac_audiotoolbox", true)));
+        assert!(prefs.excludes(&caps("aac_sw", false)));
+    }
+
+    #[test]
+    fn no_hardware_and_require_hardware_excludes_everything() {
+        // Mutually-exclusive nonsense config — nothing is selectable.
+        let prefs = CodecPreferences {
+            no_hardware: true,
+            require_hardware: true,
+            ..Default::default()
+        };
+        assert!(prefs.excludes(&caps("aac_audiotoolbox", true)));
+        assert!(prefs.excludes(&caps("aac_sw", false)));
     }
 }
