@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.18](https://github.com/OxideAV/oxideav-core/compare/v0.1.17...v0.1.18) - 2026-05-05
+
+### Other
+
+- add linkme-based distributed-slice auto-registration (REGISTRARS + register! macro)
+
 ## [0.1.17](https://github.com/OxideAV/oxideav-core/compare/v0.1.16...v0.1.17) - 2026-05-04
 
 ### Other
