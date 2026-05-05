@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Six new `PixelFormat` variants for high-bit-depth planar GBR(A):
+  `Gbrp10Le`, `Gbrap10Le`, `Gbrp12Le`, `Gbrap12Le`, `Gbrp14Le`,
+  `Gbrap14Le` (discriminants 35..40, appended after `Yuv411P`). Planes
+  are ordered G, B, R (and A on the alpha variants), each sample stored
+  as a 16-bit little-endian word with the top bits zero — matching the
+  ffmpeg `AV_PIX_FMT_GBRP*LE` family. Wired into `is_planar`,
+  `plane_count`, `has_alpha`, and `bits_per_pixel_approx`. Unblocks
+  `oxideav-magicyuv` 12/14-bit lossless GBR returns and the JPEG 2000 /
+  OpenEXR / TIFF 12-bit GBR workflows.
+
 ## [0.1.18](https://github.com/OxideAV/oxideav-core/compare/v0.1.17...v0.1.18) - 2026-05-05
 
 ### Other

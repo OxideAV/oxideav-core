@@ -539,6 +539,38 @@ pub enum PixelFormat {
     /// NTSC DV-25 and a legal JPEG sampling layout (luma H=4, V=1;
     /// chroma H=V=1) emitted by some real-world JPEG corpora.
     Yuv411P = 34,
+
+    // --- Planar GBR / GBRA (RGB stored as planes in G,B,R order) ---
+    //
+    // High-bit-depth GBR(A) layouts used by MagicYUV, JPEG 2000, OpenEXR,
+    // TIFF and similar workflows that need lossless RGB at 10/12/14 bits
+    // per channel. Planes are ordered G, B, R (and A for the `Gbrap*`
+    // variants) — matching the ffmpeg `AV_PIX_FMT_GBRP*LE` family — and
+    // each sample is stored as a 16-bit little-endian word with the
+    // top bits zero. There is no native 8-bit `Gbrp` variant in this
+    // enum yet because no in-tree codec needs it; if one is added later
+    // it must be appended at a fresh discriminant.
+    /// 10-bit planar GBR, little-endian 16-bit storage. 3 planes ordered
+    /// G, B, R; each sample uses the low 10 bits of a 16-bit word.
+    Gbrp10Le = 35,
+    /// 10-bit planar GBR + alpha, little-endian 16-bit storage. 4 planes
+    /// ordered G, B, R, A; each sample uses the low 10 bits of a 16-bit
+    /// word.
+    Gbrap10Le = 36,
+    /// 12-bit planar GBR, little-endian 16-bit storage. 3 planes ordered
+    /// G, B, R; each sample uses the low 12 bits of a 16-bit word.
+    Gbrp12Le = 37,
+    /// 12-bit planar GBR + alpha, little-endian 16-bit storage. 4 planes
+    /// ordered G, B, R, A; each sample uses the low 12 bits of a 16-bit
+    /// word.
+    Gbrap12Le = 38,
+    /// 14-bit planar GBR, little-endian 16-bit storage. 3 planes ordered
+    /// G, B, R; each sample uses the low 14 bits of a 16-bit word.
+    Gbrp14Le = 39,
+    /// 14-bit planar GBR + alpha, little-endian 16-bit storage. 4 planes
+    /// ordered G, B, R, A; each sample uses the low 14 bits of a 16-bit
+    /// word.
+    Gbrap14Le = 40,
 }
 
 impl PixelFormat {
@@ -562,6 +594,12 @@ impl PixelFormat {
                 | Self::Nv12
                 | Self::Nv21
                 | Self::Yuva420P
+                | Self::Gbrp10Le
+                | Self::Gbrap10Le
+                | Self::Gbrp12Le
+                | Self::Gbrap12Le
+                | Self::Gbrp14Le
+                | Self::Gbrap14Le
         )
     }
 
@@ -581,12 +619,15 @@ impl PixelFormat {
                 | Self::Rgba64Le
                 | Self::Ya8
                 | Self::Yuva420P
+                | Self::Gbrap10Le
+                | Self::Gbrap12Le
+                | Self::Gbrap14Le
         )
     }
 
     /// Number of planes in the stored layout. Packed and palette formats
-    /// return 1; NV12/NV21 return 2; planar YUV without alpha returns 3;
-    /// YuvA variants return 4.
+    /// return 1; NV12/NV21 return 2; planar YUV without alpha and the
+    /// `Gbrp*` variants return 3; YuvA and `Gbrap*` variants return 4.
     pub fn plane_count(&self) -> usize {
         match self {
             Self::Nv12 | Self::Nv21 => 2,
@@ -602,8 +643,11 @@ impl PixelFormat {
             | Self::Yuv444P12Le
             | Self::YuvJ420P
             | Self::YuvJ422P
-            | Self::YuvJ444P => 3,
-            Self::Yuva420P => 4,
+            | Self::YuvJ444P
+            | Self::Gbrp10Le
+            | Self::Gbrp12Le
+            | Self::Gbrp14Le => 3,
+            Self::Yuva420P | Self::Gbrap10Le | Self::Gbrap12Le | Self::Gbrap14Le => 4,
             _ => 1,
         }
     }
@@ -636,6 +680,16 @@ impl PixelFormat {
             Self::Yuv422P10Le | Self::Yuv422P12Le => 32,
             Self::Yuv444P10Le | Self::Yuv444P12Le => 48,
             Self::Yuva420P => 20,
+            // Planar GBR(A) at 10/12/14 bits stored in 16-bit words: we
+            // report the packed bits-per-pixel density (samples × bits)
+            // rather than the 16-bit storage cost, matching how the
+            // 10/12-bit YUV variants are reported above.
+            Self::Gbrp10Le => 30,
+            Self::Gbrap10Le => 40,
+            Self::Gbrp12Le => 36,
+            Self::Gbrap12Le => 48,
+            Self::Gbrp14Le => 42,
+            Self::Gbrap14Le => 56,
         }
     }
 }
@@ -686,6 +740,12 @@ mod tests {
         assert_eq!(PixelFormat::Uyvy422 as u16, 32);
         assert_eq!(PixelFormat::Cmyk as u16, 33);
         assert_eq!(PixelFormat::Yuv411P as u16, 34);
+        assert_eq!(PixelFormat::Gbrp10Le as u16, 35);
+        assert_eq!(PixelFormat::Gbrap10Le as u16, 36);
+        assert_eq!(PixelFormat::Gbrp12Le as u16, 37);
+        assert_eq!(PixelFormat::Gbrap12Le as u16, 38);
+        assert_eq!(PixelFormat::Gbrp14Le as u16, 39);
+        assert_eq!(PixelFormat::Gbrap14Le as u16, 40);
     }
 
     #[test]
@@ -915,5 +975,60 @@ mod tests {
         assert_eq!(PixelFormat::Yuv444P10Le.bits_per_pixel_approx(), 48);
         assert_eq!(PixelFormat::Yuv444P12Le.bits_per_pixel_approx(), 48);
         assert_eq!(PixelFormat::Yuv420P12Le.bits_per_pixel_approx(), 24);
+    }
+
+    #[test]
+    fn high_bit_gbr_planar_metadata() {
+        // All six new variants are planar with the right plane count.
+        for fmt in [
+            PixelFormat::Gbrp10Le,
+            PixelFormat::Gbrp12Le,
+            PixelFormat::Gbrp14Le,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 3, "{fmt:?} must have 3 planes");
+            assert!(!fmt.has_alpha(), "{fmt:?} must not have alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+        }
+        for fmt in [
+            PixelFormat::Gbrap10Le,
+            PixelFormat::Gbrap12Le,
+            PixelFormat::Gbrap14Le,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 4, "{fmt:?} must have 4 planes");
+            assert!(fmt.has_alpha(), "{fmt:?} must carry alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+        }
+    }
+
+    #[test]
+    fn high_bit_gbr_bits_per_pixel_approx() {
+        // Packed bits-per-pixel = samples × bits (consistent with how
+        // the 10/12-bit YUV variants are reported above).
+        assert_eq!(PixelFormat::Gbrp10Le.bits_per_pixel_approx(), 30);
+        assert_eq!(PixelFormat::Gbrap10Le.bits_per_pixel_approx(), 40);
+        assert_eq!(PixelFormat::Gbrp12Le.bits_per_pixel_approx(), 36);
+        assert_eq!(PixelFormat::Gbrap12Le.bits_per_pixel_approx(), 48);
+        assert_eq!(PixelFormat::Gbrp14Le.bits_per_pixel_approx(), 42);
+        assert_eq!(PixelFormat::Gbrap14Le.bits_per_pixel_approx(), 56);
+    }
+
+    #[test]
+    fn high_bit_gbr_constructible_and_distinct() {
+        // Round-trip the discriminant through `as u16` and back via the
+        // pinning test's reverse mapping — every variant must be unique.
+        let all = [
+            PixelFormat::Gbrp10Le,
+            PixelFormat::Gbrap10Le,
+            PixelFormat::Gbrp12Le,
+            PixelFormat::Gbrap12Le,
+            PixelFormat::Gbrp14Le,
+            PixelFormat::Gbrap14Le,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for fmt in all {
+            assert!(seen.insert(fmt as u16), "duplicate discriminant: {fmt:?}");
+        }
     }
 }

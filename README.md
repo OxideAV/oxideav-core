@@ -11,7 +11,8 @@ pure-Rust media framework:
 * **`TimeBase`** / **`Rational`** — rational time per stream; timestamps
   are integers in that base.
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
-  (30+ pixel variants, all common sample layouts).
+  (40+ pixel variants including 8/10/12-bit YUV, 10/12/14-bit planar
+  GBR(A), packed RGB/RGBA, NV12/NV21, all common sample layouts).
 * **`CodecTag`** / **`CodecResolver`** — neutral abstraction for mapping
   container-level tags (AVI FourCC, WAVEFORMATEX `wFormatTag`, MP4 OTI,
   Matroska CodecID strings) to oxideav `CodecId`s. Lets codec crates own
