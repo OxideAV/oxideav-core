@@ -303,6 +303,17 @@ pub struct CodecParameters {
     /// decodes unchanged. Tighten via [`Self::with_limits`] when the
     /// caller wants to harden the pipeline against untrusted input.
     pub limits: DecoderLimits,
+
+    /// Optional 0-based device selector for hardware-accelerated codecs.
+    /// `None` (the default) means "use the backend's default device";
+    /// `Some(n)` requests device `n` from the backend's
+    /// [`crate::engine::HwDeviceInfo`] enumeration order.
+    ///
+    /// Software codecs ignore this field. Hardware codecs read it as
+    /// `params.device_index.unwrap_or(0)` to pick which physical engine
+    /// to bind to. Indexing matches the order of devices reported by the
+    /// codec entry's `engine_probe` function.
+    pub device_index: Option<u32>,
 }
 
 impl CodecParameters {
@@ -322,6 +333,7 @@ impl CodecParameters {
             bit_rate: None,
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
+            device_index: None,
         }
     }
 
@@ -359,6 +371,7 @@ impl CodecParameters {
             bit_rate: None,
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
+            device_index: None,
         }
     }
 
@@ -382,6 +395,7 @@ impl CodecParameters {
             bit_rate: None,
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
+            device_index: None,
         }
     }
 
@@ -404,6 +418,7 @@ impl CodecParameters {
             bit_rate: None,
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
+            device_index: None,
         }
     }
 
@@ -473,6 +488,17 @@ impl CodecParameters {
     /// ```
     pub fn with_limits(mut self, limits: DecoderLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Bind subsequent decoder/encoder construction to a specific device.
+    /// `index` matches the position in the `engine_probe` device list.
+    ///
+    /// Software codecs ignore this field. Hardware codecs read it as
+    /// `params.device_index.unwrap_or(0)` to pick which physical engine
+    /// to bind to.
+    pub fn with_device_index(mut self, index: u32) -> Self {
+        self.device_index = Some(index);
         self
     }
 }
@@ -606,5 +632,40 @@ mod channel_layout_plumbing_tests {
         assert!(p.channels.is_none());
         assert_eq!(p.resolved_channels(), Some(8));
         assert_eq!(p.resolved_layout(), Some(ChannelLayout::Surround71));
+    }
+}
+
+#[cfg(test)]
+mod codec_parameters_device_index_tests {
+    use super::*;
+
+    #[test]
+    fn codec_parameters_device_index_defaults_to_none() {
+        assert!(
+            CodecParameters::audio(CodecId::new("pcm_s16le"))
+                .device_index
+                .is_none()
+        );
+        assert!(
+            CodecParameters::video(CodecId::new("h264"))
+                .device_index
+                .is_none()
+        );
+        assert!(
+            CodecParameters::subtitle(CodecId::new("srt"))
+                .device_index
+                .is_none()
+        );
+        assert!(
+            CodecParameters::data(CodecId::new("bin"))
+                .device_index
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn codec_parameters_with_device_index_sets_field() {
+        let p = CodecParameters::video(CodecId::new("h264")).with_device_index(2);
+        assert_eq!(p.device_index, Some(2));
     }
 }

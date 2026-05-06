@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CodecParameters::device_index: Option<u32>` + `with_device_index(u32)`
+  builder method. Lets callers bind a HW decoder/encoder to a specific
+  physical device by index (matching `engine_probe`'s device order). SW
+  codecs ignore the field; HW codecs read it as
+  `params.device_index.unwrap_or(0)`.
+
 ## [0.1.22](https://github.com/OxideAV/oxideav-core/compare/v0.1.21...v0.1.22) - 2026-05-05
 
 ### Other
