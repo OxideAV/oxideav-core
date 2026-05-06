@@ -48,8 +48,8 @@ pub use registry::{
     BytesSource, CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn,
     ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory,
     FilterRegistry, FrameSource, Muxer, OpenBytesFn, OpenDemuxerFn, OpenFramesFn, OpenMuxerFn,
-    OpenPacketsFn, PacketSource, ProbeData, ProbeScore, ReadSeek, Registrar, RuntimeContext,
-    SourceOutput, SourceRegistry, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION, REGISTRARS,
+    OpenPacketsFn, PacketSource, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceOutput,
+    SourceRegistry, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
 };
 pub use stream::{
     CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,

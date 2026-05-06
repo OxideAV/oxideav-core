@@ -30,10 +30,3 @@ serde_json = "1"
 # (reading any other type, e.g. `NonZeroU8`, would be UB). bytemuck is
 # a zero-overhead, no-deps marker-trait crate.
 bytemuck = "1"
-# Distributed-slice registry: each sibling crate that ships a codec /
-# container / filter / source can call `oxideav_core::register!("name",
-# fn)` to deposit a `Registrar` into the global `REGISTRARS` slice.
-# `RuntimeContext::with_all_features()` walks the slice on first call.
-# linkme works on every Rust target we care about (ELF/Mach-O/COFF +
-# wasm32 via wasm-ld); no Wasm-hostile init-array dependency.
-linkme = "0.3"
