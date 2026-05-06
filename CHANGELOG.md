@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.24](https://github.com/OxideAV/oxideav-core/compare/v0.1.23...v0.1.24) - 2026-05-06
+
+### Other
+
+- drop linkme, swap macro to wrapper-fn dispatch
+- propagate CodecInfo engine_id + engine_probe to CodecImplementation
+
 ## [0.1.23](https://github.com/OxideAV/oxideav-core/compare/v0.1.22...v0.1.23) - 2026-05-06
 
 ### Other
