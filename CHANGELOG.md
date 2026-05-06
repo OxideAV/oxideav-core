@@ -7,27 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CodecParameters::tag: Option<CodecTag>` field — the on-wire tag
+  for this stream, set by the **producer** (demuxer at read-time,
+  encoder via `output_params()` at configure-time). Plus a
+  `CodecParameters::with_tag(tag)` builder helper. Wire tags are
+  per-stream state (different `mpeg4video` streams correctly
+  identify as `DIVX` / `XVID` / `MP4V` / `FMP4`; different `h264`
+  streams as `H264` vs `AVC1`), so a stream-level field is the
+  right home — muxers read `params.tag` directly and round-trip
+  the demuxed FourCC byte-for-byte instead of going through the
+  registry.
+
+### Removed (BREAKING)
+
+- `CodecResolver::tag_for_codec(&CodecId, CodecTagKind) -> Option<CodecTag>`
+  trait method (added in 0.1.25), `CodecTagKind` enum,
+  `CodecTag::kind()` helper, and `CodecRegistry::tag_for_codec_ref(...)`
+  inherent. The architecture was wrong: the registry's
+  "first-declared tag for this codec_id" answer is arbitrary on
+  multi-tag codecs and breaks round-trip preservation. Use
+  `CodecParameters::tag` instead — set by whoever produced the
+  stream (demuxer when parsing existing media, encoder at
+  configure-time). Forward `resolve_tag` direction is unchanged.
+
 ## [0.1.25](https://github.com/OxideAV/oxideav-core/compare/v0.1.24...v0.1.25) - 2026-05-06
 
 ### Other
 
 - add CodecResolver::tag_for_codec inverse-lookup
-
-### Added
-
-- `CodecResolver::tag_for_codec(&CodecId, CodecTagKind) -> Option<CodecTag>`
-  trait method (default returns `None`) for the **inverse** direction
-  of tag resolution: pick a representative on-wire tag for a known
-  `CodecId` whose family matches the `CodecTagKind` discriminant. Used
-  by muxers (e.g. `oxideav-avi`) to decide which FourCC / WAVE-format
-  tag / Matroska CodecID to emit for a stream.
-- `CodecRegistry::tag_for_codec_ref(...)` inherent form returning a
-  reference; the trait method delegates to it. Walks registrations in
-  declaration order and returns the first claimed tag matching the
-  requested kind — codec crates should declare their canonical wire
-  FourCC first.
-- `CodecTagKind` discriminant enum (`Fourcc` / `WaveFormat` /
-  `Mp4ObjectType` / `Matroska`) plus `CodecTag::kind()` helper.
 
 ## [0.1.24](https://github.com/OxideAV/oxideav-core/compare/v0.1.23...v0.1.24) - 2026-05-06
 

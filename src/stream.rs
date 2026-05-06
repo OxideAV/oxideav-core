@@ -228,6 +228,18 @@ pub type ProbeFn = fn(&ProbeContext) -> Confidence;
 /// registry implements this, but defining the trait here lets
 /// containers consume tag resolution via `&dyn CodecResolver` without
 /// pulling in the codec crate as a direct dependency.
+///
+/// **Inverse direction** (codec_id → wire tag) is intentionally NOT a
+/// method on this trait. Wire tags are per-stream state: different
+/// `mpeg4video` streams correctly identify as `DIVX` / `XVID` /
+/// `MP4V` / `FMP4`, different `h264` streams as `H264` vs `AVC1`,
+/// and so on. The stream's [`CodecParameters::tag`] field is the
+/// canonical home for that data — set by the demuxer when reading
+/// existing media and by the encoder via its `output_params()` at
+/// configure-time. A registry-level "give me the canonical tag for
+/// this codec_id" lookup walks registration order and returns
+/// whichever tag was declared first, which is arbitrary and breaks
+/// round-trip preservation.
 pub trait CodecResolver: Sync {
     /// Resolve the tag in `ctx.tag` to a codec id. Implementations walk
     /// every registration whose tag set contains the tag, call each
@@ -235,52 +247,6 @@ pub trait CodecResolver: Sync {
     /// the highest resulting confidence. Ties are broken by
     /// registration order.
     fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId>;
-
-    /// Inverse of [`Self::resolve_tag`]: pick a representative
-    /// container tag for a known [`CodecId`] that prefers the family
-    /// in `kind`. **Used by muxers** to decide which FourCC /
-    /// WAVE-format-tag / Matroska CodecID to write into the wire
-    /// header for a given codec.
-    ///
-    /// Implementations walk every registration claiming `codec_id` and
-    /// return the first tag whose discriminant matches `kind`, or
-    /// `None` when no such claim exists. The default impl returns
-    /// `None` — only the codec registry has the data to answer; this
-    /// trait method exists so containers can hold an
-    /// `&dyn CodecResolver` and ask without naming the registry type.
-    ///
-    /// Containers that know their on-wire tag family (AVI: FourCC for
-    /// video, WaveFormat for audio; MP4: ObjectTypeIndication;
-    /// Matroska: CodecID string) pass the corresponding [`CodecTagKind`]
-    /// and rely on the default-trip behaviour for codecs whose
-    /// declared tags don't include that family.
-    fn tag_for_codec(&self, _codec_id: &CodecId, _kind: CodecTagKind) -> Option<CodecTag> {
-        None
-    }
-}
-
-/// Discriminant for [`CodecTag`] variants used by
-/// [`CodecResolver::tag_for_codec`] to filter the registry walk to a
-/// specific tag family.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CodecTagKind {
-    Fourcc,
-    WaveFormat,
-    Mp4ObjectType,
-    Matroska,
-}
-
-impl CodecTag {
-    /// Family discriminant for matching against [`CodecTagKind`] in
-    /// [`CodecResolver::tag_for_codec`].
-    pub fn kind(&self) -> CodecTagKind {
-        match self {
-            CodecTag::Fourcc(_) => CodecTagKind::Fourcc,
-            CodecTag::WaveFormat(_) => CodecTagKind::WaveFormat,
-            CodecTag::Mp4ObjectType(_) => CodecTagKind::Mp4ObjectType,
-            CodecTag::Matroska(_) => CodecTagKind::Matroska,
-        }
-    }
 }
 
 /// Null resolver that resolves nothing — useful as a default when a
@@ -360,6 +326,30 @@ pub struct CodecParameters {
     /// to bind to. Indexing matches the order of devices reported by the
     /// codec entry's `engine_probe` function.
     pub device_index: Option<u32>,
+
+    /// On-wire tag for this stream — the FourCC / WAVEFORMATEX
+    /// `wFormatTag` / MP4 ObjectTypeIndication / Matroska `CodecID`
+    /// string carried by the container. Set by the **producer**:
+    ///
+    /// * **Demuxers** populate this from the stream's container
+    ///   header at read-time so muxers re-emitting the same stream
+    ///   round-trip the original tag byte-for-byte (`mpeg4video`
+    ///   demuxed as `DIVX` re-muxes as `DIVX`, not as the codec
+    ///   crate's first-declared `XVID`).
+    /// * **Encoders** populate this in [`crate::Encoder::output_params`]
+    ///   to tell muxers which wire tag to write — needed for
+    ///   multi-FourCC codecs whose configuration (pixel format / bit
+    ///   depth / alpha / chroma sampling) selects one of several
+    ///   valid FourCCs (e.g. MagicYUV's 17 native v7 codes).
+    ///
+    /// `None` is the default — sensible for in-memory streams that
+    /// haven't been bound to a container yet. Muxers that need a
+    /// wire tag and find `None` here will fall back to whatever
+    /// container-specific synthesis they support (e.g. AVI's PCM
+    /// `wFormatTag` synthesis from `sample_format`, or the
+    /// `extradata[0..4]` printable-FourCC hint for legacy callers)
+    /// and otherwise return `Error::Unsupported`.
+    pub tag: Option<CodecTag>,
 }
 
 impl CodecParameters {
@@ -380,6 +370,7 @@ impl CodecParameters {
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
             device_index: None,
+            tag: None,
         }
     }
 
@@ -418,6 +409,7 @@ impl CodecParameters {
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
             device_index: None,
+            tag: None,
         }
     }
 
@@ -442,6 +434,7 @@ impl CodecParameters {
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
             device_index: None,
+            tag: None,
         }
     }
 
@@ -465,6 +458,7 @@ impl CodecParameters {
             options: CodecOptions::default(),
             limits: DecoderLimits::default(),
             device_index: None,
+            tag: None,
         }
     }
 
@@ -545,6 +539,24 @@ impl CodecParameters {
     /// to bind to.
     pub fn with_device_index(mut self, index: u32) -> Self {
         self.device_index = Some(index);
+        self
+    }
+
+    /// Builder method: set the on-wire [`tag`](Self::tag).
+    ///
+    /// Demuxers call this from their stream-format parser so muxers
+    /// re-emitting the stream preserve the original FourCC / wFormatTag
+    /// byte-for-byte. Encoders call this in `output_params()` to
+    /// announce which wire tag they're producing.
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters, CodecTag};
+    /// let p = CodecParameters::video(CodecId::new("magicyuv"))
+    ///     .with_tag(CodecTag::fourcc(b"M8RG"));
+    /// assert_eq!(p.tag, Some(CodecTag::fourcc(b"M8RG")));
+    /// ```
+    pub fn with_tag(mut self, tag: CodecTag) -> Self {
+        self.tag = Some(tag);
         self
     }
 }
@@ -705,5 +717,42 @@ mod codec_parameters_device_index_tests {
     fn codec_parameters_with_device_index_sets_field() {
         let p = CodecParameters::video(CodecId::new("h264")).with_device_index(2);
         assert_eq!(p.device_index, Some(2));
+    }
+}
+
+#[cfg(test)]
+mod codec_parameters_tag_tests {
+    use super::*;
+
+    #[test]
+    fn tag_defaults_to_none_on_every_constructor() {
+        assert!(CodecParameters::audio(CodecId::new("aac")).tag.is_none());
+        assert!(CodecParameters::video(CodecId::new("h264")).tag.is_none());
+        assert!(CodecParameters::subtitle(CodecId::new("srt")).tag.is_none());
+        assert!(CodecParameters::data(CodecId::new("bin")).tag.is_none());
+    }
+
+    #[test]
+    fn with_tag_builder_sets_field() {
+        let p =
+            CodecParameters::video(CodecId::new("magicyuv")).with_tag(CodecTag::fourcc(b"M8RG"));
+        assert_eq!(p.tag, Some(CodecTag::fourcc(b"M8RG")));
+    }
+
+    #[test]
+    fn with_tag_round_trip_preserves_demuxed_fourcc() {
+        // The canonical use-case: a demuxer sees DIVX in the bitstream
+        // and tags the params accordingly. The mpeg4video codec also
+        // claims XVID / MP4V / FMP4, but the muxer must re-emit DIVX.
+        let demuxed =
+            CodecParameters::video(CodecId::new("mpeg4video")).with_tag(CodecTag::fourcc(b"DIVX"));
+        // Muxer reads `params.tag` directly — no registry round-trip.
+        assert_eq!(demuxed.tag, Some(CodecTag::fourcc(b"DIVX")));
+    }
+
+    #[test]
+    fn wave_format_tag_preserved() {
+        let p = CodecParameters::audio(CodecId::new("mp3")).with_tag(CodecTag::wave_format(0x0055));
+        assert_eq!(p.tag, Some(CodecTag::WaveFormat(0x0055)));
     }
 }
