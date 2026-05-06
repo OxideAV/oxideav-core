@@ -26,8 +26,8 @@ use std::collections::HashMap;
 use crate::arena;
 use crate::{
     CodecCapabilities, CodecId, CodecOptionsStruct, CodecParameters, CodecResolver, CodecTag,
-    Error, ExecutionContext, Frame, OptionField, Packet, PixelFormat, ProbeContext, ProbeFn,
-    Result,
+    CodecTagKind, Error, ExecutionContext, Frame, OptionField, Packet, PixelFormat, ProbeContext,
+    ProbeFn, Result,
 };
 
 // ───────────────────────── codec traits ─────────────────────────
@@ -416,6 +416,11 @@ pub struct CodecRegistry {
 struct RegistrationRecord {
     id: CodecId,
     probe: Option<ProbeFn>,
+    /// The tags this registration claims, in declaration order. Used
+    /// by [`CodecRegistry::tag_for_codec_ref`] to pick the codec
+    /// crate's preferred wire tag (the first one declared) when the
+    /// muxer asks for a `codec_id` → `CodecTag` lookup.
+    tags: Vec<CodecTag>,
 }
 
 impl CodecRegistry {
@@ -488,6 +493,7 @@ impl CodecRegistry {
         self.registrations.push(RegistrationRecord {
             id: id.clone(),
             probe,
+            tags: tags.clone(),
         });
         for tag in tags {
             self.tag_index.entry(tag).or_default().push(record_idx);
@@ -650,6 +656,31 @@ impl CodecRegistry {
         })
     }
 
+    /// Inverse-direction lookup: pick a representative container tag
+    /// for `codec_id` whose family matches `kind`. Used by muxers to
+    /// decide which on-wire FourCC / WAVE-format-tag / Matroska
+    /// CodecID to emit for a stream of the given codec.
+    ///
+    /// Walks every (tag, id) registration in registration order and
+    /// returns the first tag whose discriminant matches `kind` and
+    /// whose id equals `codec_id`. Returns `None` when the codec has
+    /// no claim of that tag family.
+    ///
+    /// Multi-tag codecs (e.g. `mpeg4video` claims `XVID`, `DIVX`,
+    /// `DX50`, …) get the **first-registered** tag — codec crates
+    /// declare their canonical / preferred wire FourCC first.
+    pub fn tag_for_codec_ref(&self, codec_id: &CodecId, kind: CodecTagKind) -> Option<&CodecTag> {
+        for rec in &self.registrations {
+            if &rec.id != codec_id {
+                continue;
+            }
+            if let Some(tag) = rec.tags.iter().find(|t| t.kind() == kind) {
+                return Some(tag);
+            }
+        }
+        None
+    }
+
     /// Inherent form of tag resolution that returns a reference.
     /// The owned-value form used by container code lives behind the
     /// [`CodecResolver`] trait impl below.
@@ -687,6 +718,10 @@ impl CodecRegistry {
 impl CodecResolver for CodecRegistry {
     fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId> {
         self.resolve_tag_ref(ctx).cloned()
+    }
+
+    fn tag_for_codec(&self, codec_id: &CodecId, kind: CodecTagKind) -> Option<CodecTag> {
+        self.tag_for_codec_ref(codec_id, kind).cloned()
     }
 }
 
@@ -865,6 +900,54 @@ mod tag_tests {
                 .map(|c| c.as_str()),
             Some("aac"),
         );
+    }
+
+    #[test]
+    fn tag_for_codec_picks_first_declared_tag_by_kind() {
+        // Multi-tag codec: declares FourCC + WaveFormat. Inverse
+        // lookup with FourCC kind returns the FourCC; with
+        // WaveFormat kind returns the WaveFormat. Order of
+        // declaration drives "primary" pick when multiple FourCCs
+        // are claimed.
+        let mut reg = CodecRegistry::new();
+        reg.register(info("aac").tags([
+            CodecTag::fourcc(b"MP4A"),
+            CodecTag::fourcc(b"AAC "),
+            CodecTag::wave_format(0x00FF),
+            CodecTag::matroska("A_AAC"),
+        ]));
+        let cid = CodecId::new("aac");
+        // First-declared FourCC = MP4A.
+        assert_eq!(
+            reg.tag_for_codec_ref(&cid, CodecTagKind::Fourcc),
+            Some(&CodecTag::fourcc(b"MP4A")),
+        );
+        assert_eq!(
+            reg.tag_for_codec_ref(&cid, CodecTagKind::WaveFormat),
+            Some(&CodecTag::wave_format(0x00FF)),
+        );
+        assert_eq!(
+            reg.tag_for_codec_ref(&cid, CodecTagKind::Matroska),
+            Some(&CodecTag::matroska("A_AAC")),
+        );
+        // Codec didn't declare an MP4 ObjectTypeIndication tag.
+        assert!(reg
+            .tag_for_codec_ref(&cid, CodecTagKind::Mp4ObjectType)
+            .is_none());
+        // Unknown codec returns None.
+        let nope = CodecId::new("noexist");
+        assert!(reg.tag_for_codec_ref(&nope, CodecTagKind::Fourcc).is_none());
+    }
+
+    #[test]
+    fn tag_for_codec_via_resolver_trait() {
+        // The trait method delegates to the inherent and returns
+        // owned values for object-safe consumers.
+        let mut reg = CodecRegistry::new();
+        reg.register(info("magicyuv").tags([CodecTag::fourcc(b"M8RG"), CodecTag::fourcc(b"M8RA")]));
+        let r: &dyn CodecResolver = &reg;
+        let got = r.tag_for_codec(&CodecId::new("magicyuv"), CodecTagKind::Fourcc);
+        assert_eq!(got, Some(CodecTag::fourcc(b"M8RG")));
     }
 
     #[test]

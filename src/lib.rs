@@ -52,8 +52,8 @@ pub use registry::{
     SourceRegistry, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
 };
 pub use stream::{
-    CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,
-    ProbeFn, StreamInfo,
+    CodecId, CodecParameters, CodecResolver, CodecTag, CodecTagKind, Confidence, NullCodecResolver,
+    ProbeContext, ProbeFn, StreamInfo,
 };
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
 pub use time::{TimeBase, Timestamp};

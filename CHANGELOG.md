@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CodecResolver::tag_for_codec(&CodecId, CodecTagKind) -> Option<CodecTag>`
+  trait method (default returns `None`) for the **inverse** direction
+  of tag resolution: pick a representative on-wire tag for a known
+  `CodecId` whose family matches the `CodecTagKind` discriminant. Used
+  by muxers (e.g. `oxideav-avi`) to decide which FourCC / WAVE-format
+  tag / Matroska CodecID to emit for a stream.
+- `CodecRegistry::tag_for_codec_ref(...)` inherent form returning a
+  reference; the trait method delegates to it. Walks registrations in
+  declaration order and returns the first claimed tag matching the
+  requested kind — codec crates should declare their canonical wire
+  FourCC first.
+- `CodecTagKind` discriminant enum (`Fourcc` / `WaveFormat` /
+  `Mp4ObjectType` / `Matroska`) plus `CodecTag::kind()` helper.
+
 ## [0.1.24](https://github.com/OxideAV/oxideav-core/compare/v0.1.23...v0.1.24) - 2026-05-06
 
 ### Other

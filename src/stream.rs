@@ -235,6 +235,52 @@ pub trait CodecResolver: Sync {
     /// the highest resulting confidence. Ties are broken by
     /// registration order.
     fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId>;
+
+    /// Inverse of [`Self::resolve_tag`]: pick a representative
+    /// container tag for a known [`CodecId`] that prefers the family
+    /// in `kind`. **Used by muxers** to decide which FourCC /
+    /// WAVE-format-tag / Matroska CodecID to write into the wire
+    /// header for a given codec.
+    ///
+    /// Implementations walk every registration claiming `codec_id` and
+    /// return the first tag whose discriminant matches `kind`, or
+    /// `None` when no such claim exists. The default impl returns
+    /// `None` — only the codec registry has the data to answer; this
+    /// trait method exists so containers can hold an
+    /// `&dyn CodecResolver` and ask without naming the registry type.
+    ///
+    /// Containers that know their on-wire tag family (AVI: FourCC for
+    /// video, WaveFormat for audio; MP4: ObjectTypeIndication;
+    /// Matroska: CodecID string) pass the corresponding [`CodecTagKind`]
+    /// and rely on the default-trip behaviour for codecs whose
+    /// declared tags don't include that family.
+    fn tag_for_codec(&self, _codec_id: &CodecId, _kind: CodecTagKind) -> Option<CodecTag> {
+        None
+    }
+}
+
+/// Discriminant for [`CodecTag`] variants used by
+/// [`CodecResolver::tag_for_codec`] to filter the registry walk to a
+/// specific tag family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CodecTagKind {
+    Fourcc,
+    WaveFormat,
+    Mp4ObjectType,
+    Matroska,
+}
+
+impl CodecTag {
+    /// Family discriminant for matching against [`CodecTagKind`] in
+    /// [`CodecResolver::tag_for_codec`].
+    pub fn kind(&self) -> CodecTagKind {
+        match self {
+            CodecTag::Fourcc(_) => CodecTagKind::Fourcc,
+            CodecTag::WaveFormat(_) => CodecTagKind::WaveFormat,
+            CodecTag::Mp4ObjectType(_) => CodecTagKind::Mp4ObjectType,
+            CodecTag::Matroska(_) => CodecTagKind::Matroska,
+        }
+    }
 }
 
 /// Null resolver that resolves nothing — useful as a default when a
