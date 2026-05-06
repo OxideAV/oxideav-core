@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25](https://github.com/OxideAV/oxideav-core/compare/v0.1.24...v0.1.25) - 2026-05-06
+
+### Other
+
+- add CodecResolver::tag_for_codec inverse-lookup
+
 ### Added
 
 - `CodecResolver::tag_for_codec(&CodecId, CodecTagKind) -> Option<CodecTag>`
