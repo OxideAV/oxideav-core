@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23](https://github.com/OxideAV/oxideav-core/compare/v0.1.22...v0.1.23) - 2026-05-06
+
+### Other
+
+- collapse assert!(...) layout in device_index tests (rustfmt)
+- add CodecParameters::device_index for HW device selection
+
 ### Added
 
 - `CodecParameters::device_index: Option<u32>` + `with_device_index(u32)`
