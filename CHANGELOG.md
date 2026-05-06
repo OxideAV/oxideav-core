@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.26](https://github.com/OxideAV/oxideav-core/compare/v0.1.25...v0.1.26) - 2026-05-06
+
+### Other
+
+- remove tag_for_codec; tags are stream-level via CodecParameters::tag
+
 ### Added
 
 - `CodecParameters::tag: Option<CodecTag>` field — the on-wire tag
