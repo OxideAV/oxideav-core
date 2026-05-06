@@ -641,26 +641,18 @@ mod codec_parameters_device_index_tests {
 
     #[test]
     fn codec_parameters_device_index_defaults_to_none() {
-        assert!(
-            CodecParameters::audio(CodecId::new("pcm_s16le"))
-                .device_index
-                .is_none()
-        );
-        assert!(
-            CodecParameters::video(CodecId::new("h264"))
-                .device_index
-                .is_none()
-        );
-        assert!(
-            CodecParameters::subtitle(CodecId::new("srt"))
-                .device_index
-                .is_none()
-        );
-        assert!(
-            CodecParameters::data(CodecId::new("bin"))
-                .device_index
-                .is_none()
-        );
+        assert!(CodecParameters::audio(CodecId::new("pcm_s16le"))
+            .device_index
+            .is_none());
+        assert!(CodecParameters::video(CodecId::new("h264"))
+            .device_index
+            .is_none());
+        assert!(CodecParameters::subtitle(CodecId::new("srt"))
+            .device_index
+            .is_none());
+        assert!(CodecParameters::data(CodecId::new("bin"))
+            .device_index
+            .is_none());
     }
 
     #[test]
