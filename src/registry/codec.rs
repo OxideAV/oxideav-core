@@ -383,6 +383,17 @@ pub struct CodecImplementation {
     /// `parse_options` — this is purely informational for discovery).
     pub encoder_options_schema: Option<&'static [OptionField]>,
     pub decoder_options_schema: Option<&'static [OptionField]>,
+    /// HW backend identifier copied verbatim from the originating
+    /// [`CodecInfo::engine_id`]. `Some("nvidia"/"vaapi"/...)` on HW
+    /// backends; `None` on SW codecs. Consumers (CLI `info` command,
+    /// pipeline dispatcher, bench loop) read this to group entries by
+    /// backend without grepping `caps.implementation`.
+    pub engine_id: Option<&'static str>,
+    /// Engine probe function copied verbatim from the originating
+    /// [`CodecInfo::engine_probe`]. `Some(fn)` on HW backends with a
+    /// probe wired; `None` on SW codecs. Consumers call it on demand
+    /// to enumerate per-device info ([`crate::engine::HwDeviceInfo`]).
+    pub engine_probe: Option<crate::engine::EngineProbeFn>,
 }
 
 #[derive(Default)]
@@ -432,14 +443,15 @@ impl CodecRegistry {
             encoder_options_schema,
             decoder_options_schema,
             // engine_id / engine_probe are metadata attached to a
-            // CodecInfo for backends that want consumers (CLI `info`)
-            // to enumerate the underlying devices on demand. The
-            // registry itself doesn't currently key on them — they're
-            // passed through whole when the registration is recorded
-            // in `registrations` (left out of `RegistrationRecord`
-            // until a consumer needs them).
-            engine_id: _,
-            engine_probe: _,
+            // CodecInfo for backends that want consumers (CLI `info`,
+            // pipeline bench) to enumerate the underlying devices on
+            // demand. They're surfaced verbatim on the resulting
+            // CodecImplementation so consumers can read them without
+            // grepping `caps.implementation`. Tag-only CodecInfo entries
+            // (no factories) drop the values on the floor — there's no
+            // CodecImplementation built in that branch.
+            engine_id,
+            engine_probe,
         } = info;
 
         let caps = {
@@ -467,6 +479,8 @@ impl CodecRegistry {
                     make_encoder: encoder_factory,
                     encoder_options_schema,
                     decoder_options_schema,
+                    engine_id,
+                    engine_probe,
                 });
         }
 
@@ -926,5 +940,50 @@ mod engine_tests {
                 .map(|c| c.as_str()),
             Some("h264"),
         );
+    }
+
+    /// No-op decoder factory so the registration produces a real
+    /// CodecImplementation (the registry skips tag-only entries —
+    /// without a factory there'd be nothing in `implementations()`
+    /// to assert against).
+    fn dummy_decoder_factory(
+        _params: &crate::CodecParameters,
+    ) -> crate::Result<Box<dyn super::Decoder>> {
+        Err(crate::Error::unsupported("dummy decoder"))
+    }
+
+    #[test]
+    fn engine_metadata_propagates_through_register() {
+        fn dummy_probe() -> Vec<HwDeviceInfo> {
+            vec![]
+        }
+        let mut reg = CodecRegistry::default();
+        reg.register(
+            CodecInfo::new(CodecId::new("h264"))
+                .capabilities(CodecCapabilities::video("h264_test"))
+                .decoder(dummy_decoder_factory)
+                .with_engine_id("test-backend")
+                .with_engine_probe(dummy_probe),
+        );
+        let impls = reg.implementations(&CodecId::new("h264"));
+        assert_eq!(impls.len(), 1);
+        assert_eq!(impls[0].engine_id, Some("test-backend"));
+        assert!(impls[0].engine_probe.is_some());
+    }
+
+    #[test]
+    fn engine_metadata_absent_for_sw_codecs() {
+        // SW codecs don't call the engine builders — both fields
+        // should land as None on the resulting CodecImplementation.
+        let mut reg = CodecRegistry::default();
+        reg.register(
+            CodecInfo::new(CodecId::new("flac"))
+                .capabilities(CodecCapabilities::audio("flac_sw"))
+                .decoder(dummy_decoder_factory),
+        );
+        let impls = reg.implementations(&CodecId::new("flac"));
+        assert_eq!(impls.len(), 1);
+        assert!(impls[0].engine_id.is_none());
+        assert!(impls[0].engine_probe.is_none());
     }
 }

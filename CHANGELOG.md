@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   physical device by index (matching `engine_probe`'s device order). SW
   codecs ignore the field; HW codecs read it as
   `params.device_index.unwrap_or(0)`.
+- `CodecImplementation` gains `engine_id: Option<&'static str>` and
+  `engine_probe: Option<EngineProbeFn>` fields. The registry's
+  `register()` method now copies them verbatim from the originating
+  `CodecInfo` (previously dropped with `_` destructure).
+- This unblocks per-device iteration in pipeline bench, and lets the
+  CLI `info` command drop its impl-name substring lookup table.
 
 ## [0.1.22](https://github.com/OxideAV/oxideav-core/compare/v0.1.21...v0.1.22) - 2026-05-05
 
