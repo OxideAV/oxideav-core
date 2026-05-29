@@ -9,7 +9,11 @@ pure-Rust media framework:
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes.
 * **`TimeBase`** / **`Rational`** — rational time per stream; timestamps
-  are integers in that base.
+  are integers in that base. `Rational` supports exact `+ - * /` and
+  unary `-` (results reduced via `i128` intermediates), plus
+  `cmp_value` / `equals_value` for value comparison (`30000/1001` vs
+  `30/1`) that doesn't disturb the structural `Eq`/`Hash` callers rely
+  on to preserve the on-wire fraction.
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
   (40+ pixel variants including 8/10/12-bit YUV, 10/12/14-bit planar
   GBR(A), packed RGB/RGBA, NV12/NV21, all common sample layouts).

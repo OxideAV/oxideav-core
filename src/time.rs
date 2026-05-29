@@ -53,8 +53,9 @@ impl Timestamp {
 }
 
 /// Rescale a value from one rational time base to another using 128-bit
-/// intermediate arithmetic to avoid overflow. Rounding is half-to-even
-/// like FFmpeg's `av_rescale_q`.
+/// intermediate arithmetic to avoid overflow. Rounding is half-away-from-zero:
+/// a tie rounds toward the larger magnitude (e.g. `+1.5 → +2`, `-1.5 → -2`),
+/// which the sign-aware `± half` adjustment below implements.
 pub fn rescale(value: i64, from: Rational, to: Rational) -> i64 {
     // value * (from.num/from.den) / (to.num/to.den)
     //   = value * from.num * to.den / (from.den * to.num)
@@ -90,5 +91,16 @@ mod tests {
     fn timestamp_seconds() {
         let ts = Timestamp::new(48000, TimeBase::new(1, 48000));
         assert!((ts.seconds() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rescale_rounds_half_away_from_zero() {
+        // 1 tick at 1/2 s/tick → 1/1 base = 0.5 → ties up to 1.
+        assert_eq!(rescale(1, Rational::new(1, 2), Rational::new(1, 1)), 1);
+        // -1 tick at 1/2 s/tick → -0.5 → ties to -1 (away from zero).
+        assert_eq!(rescale(-1, Rational::new(1, 2), Rational::new(1, 1)), -1);
+        // 3 ticks at 1/2 → 1.5 → 2.
+        assert_eq!(rescale(3, Rational::new(1, 2), Rational::new(1, 1)), 2);
+        assert_eq!(rescale(-3, Rational::new(1, 2), Rational::new(1, 1)), -2);
     }
 }

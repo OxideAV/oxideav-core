@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Rational` arithmetic: `impl Add / Sub / Mul / Div / Neg`. Every
+  operator computes its result with `i128` intermediates and returns
+  the fraction in lowest terms, so products that transiently overflow
+  `i64` but reduce back into range still yield the correct answer.
+- `Rational::cmp_value` / `Rational::equals_value` — value comparison
+  by overflow-safe `i128` cross-product, so `30000/1001` and `30/1`
+  order correctly without reducing or losing precision. These are
+  deliberately *not* the `Ord` / `PartialOrd` traits: the derived
+  `Eq` / `Hash` on `Rational` are **structural** (`1/2 != 2/4`) to
+  preserve the exact on-wire fraction, and a value-based `Ord` would
+  violate the `Ord`/`Eq` consistency contract against that structural
+  `Eq`. Replaces the hand-rolled `num * d == n * den` cross-products
+  that consumer crates (e.g. oxideav-prores' `frame_rate_code_*`)
+  have been duplicating. Zero denominators get a defensive signed-
+  infinity total order.
+- `Rational::signum` (`-1` / `0` / `1`) and `Rational::abs`, both
+  sign-normalizing a negative denominator onto the numerator first.
+
+### Fixed
+
+- `time::rescale` doc comment claimed half-to-even rounding; the code
+  implements half-away-from-zero. Corrected the comment and added a
+  tie-rounding regression test.
+
 ## [0.1.26](https://github.com/OxideAV/oxideav-core/compare/v0.1.25...v0.1.26) - 2026-05-06
 
 ### Other
