@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.28](https://github.com/OxideAV/oxideav-core/compare/v0.1.27...v0.1.28) - 2026-05-30
+
+### Other
+
+- add MultiTitleSource trait + SourceOutput::MultiTitle variant
+- add CodecParameters::language for per-track BCP-47 / ISO 639 tag
+
 ## [0.1.27](https://github.com/OxideAV/oxideav-core/compare/v0.1.26...v0.1.27) - 2026-05-29
 
 ### Other
