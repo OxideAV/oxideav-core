@@ -2,7 +2,7 @@
 //!
 //! `SourceRegistry` maps URI schemes (`file`, `http`, `rtmp`, `generate`,
 //! …) to opener functions and dispatches `open(uri)` to the right driver.
-//! A driver opens a URI as one of three shapes:
+//! A driver opens a URI as one of four shapes:
 //!
 //! * [`BytesSource`] — a `Read + Seek` byte stream that downstream code
 //!   then passes to a container demuxer (the historical shape, used by
@@ -13,6 +13,12 @@
 //! * [`FrameSource`] — a producer of already-decoded [`Frame`]s. Used by
 //!   synthetic generators that emit frames natively, skipping both the
 //!   container and decoder stages.
+//! * [`MultiTitleSource`] — a source that emits N discrete byte streams
+//!   (titles), one per logical "segment" the source carries
+//!   (BD-ROM chapters or unique titles, DVD VTS entries, multi-title
+//!   MKV editions, …). The CLI's `oxideav remux` substitutes a
+//!   per-title token into a `%s.<ext>`-style output-path template, so
+//!   each title lands in its own output file.
 //!
 //! The driver picks the variant when it registers; [`SourceRegistry::open`]
 //! returns the corresponding [`SourceOutput`] enum so the pipeline
@@ -61,6 +67,79 @@ pub trait PacketSource: Send {
     }
 }
 
+/// A source that emits N discrete byte streams ("titles") rather
+/// than a single contiguous one.
+///
+/// The motivating shape is BD-ROM: a disc contains many *titles*
+/// (whole movies, behind-the-scenes featurettes, trailers) and each
+/// title can be sliced further into *chapters*. The Blu-ray source
+/// driver expresses both shapes through this trait — a URI like
+/// `bluray:///path?title=1&chapters=2-5` opens a [`MultiTitleSource`]
+/// whose four titles are chapters 2, 3, 4, 5 of disc-title 1; a URI
+/// without `?chapters=` opens a [`MultiTitleSource`] with a single
+/// title (the autoplay title). DVD-Video, multi-edition MKV, and
+/// any other format with explicit segment structure plug in the
+/// same way.
+///
+/// Downstream callers fan out: each title is opened as its own
+/// [`BytesSource`], demuxed independently, and written to its own
+/// output path. The CLI's `oxideav remux` substitutes
+/// [`Self::title_label`] into a `%s` token in the output-path
+/// template so each title lands in a separate file. Other front-ends
+/// (`oxideplay bluray://`, a future GUI title-picker, …) can iterate
+/// titles the same way.
+///
+/// Sources that don't have multi-title structure should keep
+/// returning a [`BytesSource`] — there's no benefit to wrapping a
+/// single-title file in this trait.
+pub trait MultiTitleSource: Send {
+    /// Number of titles this source emits. Stable for the lifetime
+    /// of the source — title discovery happens at `open` time, not
+    /// while streaming.
+    fn title_count(&self) -> usize;
+
+    /// Open the title at `index` (0-based) as a single-stream
+    /// [`BytesSource`] the existing container registry can demux.
+    /// `index` must satisfy `index < self.title_count()`. Calling
+    /// `open_title` more than once on the same index is allowed —
+    /// the returned source is a fresh handle each time.
+    fn open_title(&mut self, index: usize) -> Result<Box<dyn BytesSource>>;
+
+    /// Stable per-title identifier substituted into a `%s` token of
+    /// a templated output path. Examples: `"3"` for chapter 3,
+    /// `"t01"` for title 1, `"introduction"` for a named edition.
+    /// Returned values must be filename-safe: ASCII letters / digits
+    /// / `-` / `_`, no path separators, no whitespace, no leading
+    /// dot. Calling code is free to additionally sanitise; an empty
+    /// string is rejected.
+    fn title_label(&self, index: usize) -> String;
+
+    /// Human-readable display name for the title (e.g.
+    /// `"Kite Uncut — Director's Cut"`) — used by interactive
+    /// front-ends to render menus. `None` when the source carries
+    /// no name. The default returns `None`.
+    fn title_display_name(&self, index: usize) -> Option<String> {
+        let _ = index;
+        None
+    }
+
+    /// Container-format hint for the title's byte stream
+    /// (`"mpegts"`, `"matroska"`, `"mp4"`, …). When `Some`, callers
+    /// can skip the format-detector pass and hand the bytes straight
+    /// to that demuxer. `None` means "sniff it" — preserves the
+    /// existing detection path. The default returns `None`.
+    fn title_container_hint(&self, index: usize) -> Option<&'static str> {
+        let _ = index;
+        None
+    }
+
+    /// Source-level metadata as ordered (key, value) pairs (disc
+    /// label, BDMT `<di:name>`, region code, …). Default is empty.
+    fn metadata(&self) -> &[(String, String)] {
+        &[]
+    }
+}
+
 /// A producer of already-decoded [`Frame`]s.
 ///
 /// Used by synthetic generators (testsrc, sine sweep, gradient image,
@@ -93,10 +172,20 @@ pub trait FrameSource: Send {
 /// What a [`SourceRegistry::open`] call returns. The variant is decided
 /// at driver-registration time, so callers can match on the shape and
 /// branch the pipeline accordingly.
+///
+/// **Marked `#[non_exhaustive]`** so a new source kind (e.g. a future
+/// `LiveStream` variant) can be added without semver-breaking
+/// downstream consumers. Match arms must include a wildcard.
+#[non_exhaustive]
 pub enum SourceOutput {
     Bytes(Box<dyn BytesSource>),
     Packets(Box<dyn PacketSource>),
     Frames(Box<dyn FrameSource>),
+    /// A multi-title source (BD-ROM, DVD-Video, multi-edition MKV).
+    /// Callers fan out: each title is opened independently via
+    /// [`MultiTitleSource::open_title`], demuxed, and routed to its
+    /// own output sink.
+    MultiTitle(Box<dyn MultiTitleSource>),
 }
 
 // ───────────────────────── opener function aliases ─────────────────────────
@@ -110,6 +199,9 @@ pub type OpenPacketsFn = fn(uri: &str) -> Result<Box<dyn PacketSource>>;
 /// Opener for a [`FrameSource`] driver.
 pub type OpenFramesFn = fn(uri: &str) -> Result<Box<dyn FrameSource>>;
 
+/// Opener for a [`MultiTitleSource`] driver.
+pub type OpenMultiTitleFn = fn(uri: &str) -> Result<Box<dyn MultiTitleSource>>;
+
 /// Internal per-scheme entry: which opener kind is registered for this
 /// scheme. Stored in a single map so [`SourceRegistry::open`] can
 /// dispatch with a single lookup, then match the variant to wrap in the
@@ -118,6 +210,7 @@ enum OpenerEntry {
     Bytes(OpenBytesFn),
     Packets(OpenPacketsFn),
     Frames(OpenFramesFn),
+    MultiTitle(OpenMultiTitleFn),
 }
 
 // ───────────────────────── SourceRegistry ─────────────────────────
@@ -163,6 +256,14 @@ impl SourceRegistry {
             .insert(scheme.to_ascii_lowercase(), OpenerEntry::Frames(opener));
     }
 
+    /// Register a [`MultiTitleSource`] opener for a scheme. Schemes
+    /// are normalised to ASCII lowercase. Replaces any prior
+    /// registration (including registrations of other opener kinds).
+    pub fn register_multi_title(&mut self, scheme: &str, opener: OpenMultiTitleFn) {
+        self.schemes
+            .insert(scheme.to_ascii_lowercase(), OpenerEntry::MultiTitle(opener));
+    }
+
     /// Open a URI. The URI's scheme determines which opener runs; bare
     /// paths (no scheme) and unrecognised schemes both fall back to the
     /// `file` driver if it is registered.
@@ -196,6 +297,7 @@ fn dispatch(entry: &OpenerEntry, uri_str: &str) -> Result<SourceOutput> {
         OpenerEntry::Bytes(open) => open(uri_str).map(SourceOutput::Bytes),
         OpenerEntry::Packets(open) => open(uri_str).map(SourceOutput::Packets),
         OpenerEntry::Frames(open) => open(uri_str).map(SourceOutput::Frames),
+        OpenerEntry::MultiTitle(open) => open(uri_str).map(SourceOutput::MultiTitle),
     }
 }
 
@@ -386,6 +488,65 @@ mod tests {
         let reg = SourceRegistry::new();
         let r = reg.open("nope://x");
         assert!(matches!(r, Err(Error::Unsupported(_))));
+    }
+
+    // ---- mock MultiTitleSource ----
+    struct MockMultiTitleSource {
+        labels: Vec<String>,
+    }
+
+    impl MultiTitleSource for MockMultiTitleSource {
+        fn title_count(&self) -> usize {
+            self.labels.len()
+        }
+        fn open_title(&mut self, index: usize) -> Result<Box<dyn BytesSource>> {
+            if index >= self.labels.len() {
+                return Err(Error::Unsupported(format!(
+                    "no title {index} (have {})",
+                    self.labels.len()
+                )));
+            }
+            // Each title is just its label repeated 4×.
+            let payload = self.labels[index].as_bytes().repeat(4);
+            Ok(Box::new(Cursor::new(payload)))
+        }
+        fn title_label(&self, index: usize) -> String {
+            self.labels[index].clone()
+        }
+        fn title_display_name(&self, index: usize) -> Option<String> {
+            Some(format!("Title {}", self.labels[index]))
+        }
+        fn title_container_hint(&self, _index: usize) -> Option<&'static str> {
+            Some("mpegts")
+        }
+    }
+
+    fn open_multi_title_mock(_uri: &str) -> Result<Box<dyn MultiTitleSource>> {
+        Ok(Box::new(MockMultiTitleSource {
+            labels: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        }))
+    }
+
+    #[test]
+    fn register_multi_title_and_open_returns_multi_title_variant() {
+        let mut reg = SourceRegistry::new();
+        reg.register_multi_title("mockmt", open_multi_title_mock);
+        let out = reg.open("mockmt://anything").expect("open");
+        match out {
+            SourceOutput::MultiTitle(mut mt) => {
+                assert_eq!(mt.title_count(), 3);
+                assert_eq!(mt.title_label(0), "1");
+                assert_eq!(mt.title_display_name(2).as_deref(), Some("Title 3"));
+                assert_eq!(mt.title_container_hint(0), Some("mpegts"));
+                let mut buf = String::new();
+                mt.open_title(1)
+                    .expect("title 1")
+                    .read_to_string(&mut buf)
+                    .unwrap();
+                assert_eq!(buf, "2222");
+            }
+            _ => panic!("expected SourceOutput::MultiTitle"),
+        }
     }
 
     #[test]
