@@ -350,6 +350,18 @@ pub struct CodecParameters {
     /// `extradata[0..4]` printable-FourCC hint for legacy callers)
     /// and otherwise return `Error::Unsupported`.
     pub tag: Option<CodecTag>,
+
+    /// BCP-47 / ISO 639 language tag (`"en"`, `"jpn"`, …) when the
+    /// container labels the stream's language. `None` means
+    /// "unspecified" — not "neutral".
+    ///
+    /// Demuxers populate this from the container's per-track language
+    /// element (MKV `Language` / `LanguageBCP47`, MP4 `mdhd` ISO 639-2
+    /// code, Ogg `LANGUAGE=` comment, …). Muxers re-emit it on the
+    /// matching container element so a round-trip preserves the
+    /// caller-visible tag byte-for-byte. No validation is performed
+    /// here — the value is whatever string the producer supplied.
+    pub language: Option<String>,
 }
 
 impl CodecParameters {
@@ -371,6 +383,7 @@ impl CodecParameters {
             limits: DecoderLimits::default(),
             device_index: None,
             tag: None,
+            language: None,
         }
     }
 
@@ -410,6 +423,7 @@ impl CodecParameters {
             limits: DecoderLimits::default(),
             device_index: None,
             tag: None,
+            language: None,
         }
     }
 
@@ -435,6 +449,7 @@ impl CodecParameters {
             limits: DecoderLimits::default(),
             device_index: None,
             tag: None,
+            language: None,
         }
     }
 
@@ -459,6 +474,7 @@ impl CodecParameters {
             limits: DecoderLimits::default(),
             device_index: None,
             tag: None,
+            language: None,
         }
     }
 
@@ -557,6 +573,22 @@ impl CodecParameters {
     /// ```
     pub fn with_tag(mut self, tag: CodecTag) -> Self {
         self.tag = Some(tag);
+        self
+    }
+
+    /// Builder method: set the per-stream [`language`](Self::language)
+    /// tag. Accepts any string — BCP-47 short codes (`"en"`), ISO
+    /// 639-2/T three-letter codes (`"jpn"`), or container-native
+    /// values are all passed through verbatim. No validation is
+    /// performed; the muxer writes whatever the caller hands in.
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters};
+    /// let p = CodecParameters::audio(CodecId::new("aac")).with_language("jpn");
+    /// assert_eq!(p.language.as_deref(), Some("jpn"));
+    /// ```
+    pub fn with_language(mut self, language: impl Into<String>) -> Self {
+        self.language = Some(language.into());
         self
     }
 }
@@ -754,5 +786,45 @@ mod codec_parameters_tag_tests {
     fn wave_format_tag_preserved() {
         let p = CodecParameters::audio(CodecId::new("mp3")).with_tag(CodecTag::wave_format(0x0055));
         assert_eq!(p.tag, Some(CodecTag::WaveFormat(0x0055)));
+    }
+}
+
+#[cfg(test)]
+mod codec_parameters_language_tests {
+    use super::*;
+
+    #[test]
+    fn language_defaults_to_none_on_every_constructor() {
+        assert!(CodecParameters::audio(CodecId::new("aac"))
+            .language
+            .is_none());
+        assert!(CodecParameters::video(CodecId::new("h264"))
+            .language
+            .is_none());
+        assert!(CodecParameters::subtitle(CodecId::new("srt"))
+            .language
+            .is_none());
+        assert!(CodecParameters::data(CodecId::new("bin"))
+            .language
+            .is_none());
+    }
+
+    #[test]
+    fn with_language_round_trips_value() {
+        let p = CodecParameters::audio(CodecId::new("aac")).with_language("jpn");
+        assert_eq!(p.language.as_deref(), Some("jpn"));
+    }
+
+    #[test]
+    fn with_language_accepts_bcp47_short_code() {
+        let p = CodecParameters::audio(CodecId::new("aac")).with_language("en");
+        assert_eq!(p.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn with_language_accepts_owned_string() {
+        let tag = String::from("fre");
+        let p = CodecParameters::audio(CodecId::new("aac")).with_language(tag);
+        assert_eq!(p.language.as_deref(), Some("fre"));
     }
 }
