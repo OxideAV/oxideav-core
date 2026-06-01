@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Packet` gains builders for the previously-unmirrored
+  [`PacketFlags`](crate::packet::PacketFlags) fields:
+  `with_header(bool)`, `with_corrupt(bool)`, `with_discard(bool)`,
+  `with_unit_boundary(bool)`, plus a `with_flags(PacketFlags)`
+  shorthand that replaces the full flag set in one call. Demuxers
+  that compute every flag up front (FLV header / discard markers,
+  RTMP sequence-end tags, MKV cluster boundaries) can now chain
+  every flag through the builder instead of mutating
+  `pkt.flags.<field>` after construction.
+- `Packet::with_stream_index(u32)` and `Packet::with_time_base(TimeBase)`
+  — chainable counterparts to the public fields, for remuxers that
+  build packets with placeholder values and remap them downstream.
+- `Packet::end_pts() -> Option<i64>` — overflow-checked
+  `pts + duration` accessor. Returns `None` when either timestamp
+  is unknown or when the sum would overflow `i64` (rather than
+  silently wrapping). Replaces the hand-rolled `pts.zip(duration)
+  .map(|(p, d)| p + d)` muxers have been duplicating.
+- `Packet::is_keyframe()` / `is_header()` / `is_discard()`
+  convenience accessors mirroring the matching `with_*` builders.
+  Purely sugar over `pkt.flags.<field>` for the three flags
+  consumers branch on most often.
+- Inline test coverage for every new builder / accessor, including
+  the `end_pts` overflow guard and negative-PTS branch (B-frame
+  pre-roll).
+
 ## [0.1.28](https://github.com/OxideAV/oxideav-core/compare/v0.1.27...v0.1.28) - 2026-05-30
 
 ### Other

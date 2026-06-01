@@ -4,7 +4,14 @@ Core types for the [oxideav](https://github.com/OxideAV/oxideav-workspace)
 pure-Rust media framework:
 
 * **`Packet`** — one compressed chunk belonging to one stream, with
-  timestamps.
+  timestamps. Chainable `with_*` builders cover every
+  [`PacketFlags`](crate::packet::PacketFlags) field
+  (`with_keyframe` / `with_header` / `with_corrupt` / `with_discard` /
+  `with_unit_boundary`, plus a bulk `with_flags`) and the
+  stream-index / time-base / pts / dts / duration setters used by
+  demuxers and remuxers. An `end_pts()` accessor returns the
+  overflow-checked `pts + duration` for muxers that need a per-
+  packet end timestamp.
 * **`Frame`** — one uncompressed audio / video / subtitle chunk.
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes.
