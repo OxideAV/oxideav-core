@@ -24,6 +24,17 @@ pure-Rust media framework:
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
   (40+ pixel variants including 8/10/12-bit YUV, 10/12/14-bit planar
   GBR(A), packed RGB/RGBA, NV12/NV21, all common sample layouts).
+* **`AttachedPicture`** / **`PictureType`** — ID3v2 `APIC` taxonomy
+  shared by ID3v2 / FLAC / MP4 / Vorbis cover-art carriage. `PictureType`
+  round-trips byte-for-byte through `from_u8` ↔ `to_u8` over the spec-
+  assigned `0x00..=0x14` range; unassigned bytes collapse to `Unknown`,
+  flagged via `is_known()` so strict writers can refuse to emit the
+  `0xFF` sentinel. `AttachedPicture::new(mime, kind)` plus chainable
+  `with_description` / `with_data` / `with_picture_type` builders cover
+  the producer side (parsers writing into a partially-decoded picture
+  as bytes arrive), and `is_external_link()` distinguishes ID3v2's
+  `"-->"` URL-sentinel mime from inline image bytes without having to
+  hardcode the string at every call site.
 * **`CodecTag`** / **`CodecResolver`** — neutral abstraction for mapping
   container-level tags (AVI FourCC, WAVEFORMATEX `wFormatTag`, MP4 OTI,
   Matroska CodecID strings) to oxideav `CodecId`s. Lets codec crates own

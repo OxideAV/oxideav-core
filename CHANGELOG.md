@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `PictureType::to_u8(self) -> u8` — explicit inverse of the existing
+  `from_u8(b)`. Equivalent to a `self as u8` cast (the enum is
+  `#[repr(u8)]` with stable spec-assigned discriminants), but the
+  named method documents the round-trip contract and surfaces the
+  `Unknown → 0xFF` sentinel caveat so ID3v2 / FLAC writers can decide
+  whether to refuse the reserved byte rather than silently emit it.
+- `PictureType::is_known(self) -> bool` — `true` for every spec-
+  assigned variant (`Other` … `PublisherLogo`), `false` for `Unknown`.
+  Consumer-side gate before strict-mode picture-frame serialisation.
+- `AttachedPicture::new(mime_type, picture_type)` constructor +
+  chainable `with_description(impl Into<String>)`,
+  `with_data(Vec<u8>)`, and `with_picture_type(PictureType)` builders.
+  Parser-friendly counterpart to the public-field struct literal for
+  ID3v2 / FLAC / MP4 / Vorbis producers that fill the picture
+  incrementally as bytes scroll past the parse position.
+- `AttachedPicture::is_external_link(&self) -> bool` — sugar over the
+  ID3v2 `"-->"` MIME sentinel that flags `data` as a URL string
+  instead of inline image bytes. Spares consumers from re-stating the
+  three-byte sentinel literal at every link-vs-inline branch.
+- Inline test coverage: every `0x00..=0x14` byte round-trips through
+  `from_u8 → to_u8`, the `Unknown` sentinel re-emits as `0xFF` and is
+  flagged by `is_known()`, and the `AttachedPicture` builders chain
+  cleanly with the `"-->"` external-link detection.
+
 - `Packet` gains builders for the previously-unmirrored
   [`PacketFlags`](crate::packet::PacketFlags) fields:
   `with_header(bool)`, `with_corrupt(bool)`, `with_discard(bool)`,
