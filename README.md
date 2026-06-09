@@ -15,12 +15,20 @@ pure-Rust media framework:
 * **`Frame`** — one uncompressed audio / video / subtitle chunk.
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes.
-* **`TimeBase`** / **`Rational`** — rational time per stream; timestamps
-  are integers in that base. `Rational` supports exact `+ - * /` and
-  unary `-` (results reduced via `i128` intermediates), plus
-  `cmp_value` / `equals_value` for value comparison (`30000/1001` vs
-  `30/1`) that doesn't disturb the structural `Eq`/`Hash` callers rely
-  on to preserve the on-wire fraction.
+* **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
+  stream; timestamps are integers in that base. Named constants
+  (`MILLIS` / `MICROS` / `NANOS` / `MPEG_TS` / `AUDIO_48K` / `AUDIO_44K1`
+  / `AUDIO_8K` / `SECONDS`) replace the workspace's `TimeBase::new(1, …)`
+  magic-numbers; `TimeBase::from_rate(u32)` constructs the inverse-of-rate
+  form, and `ticks_of(seconds: f64)` is the overflow-clamped inverse of
+  the existing `seconds_of(ticks)`. `Timestamp::from_seconds` /
+  `checked_add_ticks` / `checked_sub_ticks` / `checked_diff` cover
+  per-stream timestamp arithmetic (including cross-base differences for
+  remux pipelines). `Rational` supports exact `+ - * /` and unary `-`
+  (results reduced via `i128` intermediates), plus `cmp_value` /
+  `equals_value` for value comparison (`30000/1001` vs `30/1`) that
+  doesn't disturb the structural `Eq`/`Hash` callers rely on to
+  preserve the on-wire fraction.
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
   (40+ pixel variants including 8/10/12-bit YUV, 10/12/14-bit planar
   GBR(A), packed RGB/RGBA, NV12/NV21, all common sample layouts).

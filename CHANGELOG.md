@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `TimeBase` typed-helper round: `from_rate(u32)` constructor wrapping
+  the `1/rate` convention (audio sample-clocks + 90 kHz MPEG / RTP +
+  microsecond / millisecond bases); `num()` / `den()` `const`
+  accessors over the underlying [`Rational`] (sugar over `tb.0.num`);
+  `is_valid()` predicate (`num != 0 && den != 0`) for branching past
+  the `1/0` placeholder demuxers stamp on data-only streams;
+  `ticks_of(seconds: f64) -> i64` — overflow-clamped, half-away-from-zero
+  inverse of the existing `seconds_of(ticks)`, so muxers that have a
+  wall-clock target can land it on the stream's base without re-rolling
+  the divide-and-round at every call site.
+- Named `TimeBase` constants for the rates that recur across the
+  workspace: `SECONDS` (`1/1`), `MILLIS` (`1/1000`), `MICROS`
+  (`1/1_000_000`), `NANOS` (`1/1_000_000_000`), `MPEG_TS` (`1/90_000`,
+  MPEG-TS / RTP video PTS clock), `AUDIO_48K` / `AUDIO_44K1` /
+  `AUDIO_8K` (canonical audio sample-clocks). Replaces the
+  `TimeBase::new(1, 90_000)` / `TimeBase::new(1, 48_000)` magic-numbers
+  scattered across `oxideav-mp4` / `oxideav-mkv` / `oxideav-ts` /
+  `oxideav-rtp` / dozens of audio-codec test fixtures with named
+  constants, so grep for `MPEG_TS` finds every 90-kHz call site.
+- `Timestamp::from_seconds(seconds: f64, base: TimeBase)` — sugar over
+  `Timestamp::new(base.ticks_of(s), base)` so producers that have a
+  wall-clock starting point can construct a timestamp in one call.
+- `Timestamp::checked_add_ticks(i64)` / `checked_sub_ticks(i64)` —
+  overflow-checked tick arithmetic that returns `Option<Timestamp>`
+  rather than wrapping silently; the base is preserved across the
+  operation.
+- `Timestamp::checked_diff(other: Timestamp) -> Option<i64>` —
+  overflow-checked difference in `self.base`'s tick units. Rescales
+  `other` onto `self`'s base first, so timestamps from different
+  sources (different demuxers in a remux pipeline, B-frame DTS minus
+  reference-frame PTS) subtract cleanly.
+- Inline test coverage for every new helper: `ticks_of` round-trips
+  `seconds_of` on integer multiples; half-away-from-zero ties match
+  the existing `rescale` rounding (`+0.5 → +1`, `-0.5 → -1`);
+  invalid-base / non-finite-seconds inputs return `0` instead of
+  panicking; `from_seconds` round-trips through `seconds()`;
+  `checked_add_ticks` / `checked_sub_ticks` surface `i64::MAX` /
+  `i64::MIN` overflow as `None`; `checked_diff` rescales mixed-base
+  pairs correctly (1 s at 48 kHz − 500 ms at 1 kHz = 24 000 ticks).
+
 - `PictureType::to_u8(self) -> u8` — explicit inverse of the existing
   `from_u8(b)`. Equivalent to a `self as u8` cast (the enum is
   `#[repr(u8)]` with stable spec-assigned discriminants), but the
