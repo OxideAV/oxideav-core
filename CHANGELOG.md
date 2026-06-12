@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.29](https://github.com/OxideAV/oxideav-core/compare/v0.1.28...v0.1.29) - 2026-06-09
+
+### Other
+
+- TimeBase named constants + Timestamp arithmetic + ticks_of inverse
+- drop release-plz.toml — use release-plz defaults across the workspace
+- add PictureType::to_u8/is_known + AttachedPicture builders
+- add flag builders + end_pts accessor
+
 ### Added
 
 - `TimeBase` typed-helper round: `from_rate(u32)` constructor wrapping
