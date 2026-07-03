@@ -1,5 +1,7 @@
 # oxideav-core
 
+[![CI](https://github.com/OxideAV/oxideav-core/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-core/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/oxideav-core.svg)](https://crates.io/crates/oxideav-core) [![docs.rs](https://docs.rs/oxideav-core/badge.svg)](https://docs.rs/oxideav-core) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Core types for the [oxideav](https://github.com/OxideAV/oxideav-workspace)
 pure-Rust media framework:
 
