@@ -53,6 +53,7 @@ pub struct BitReader<'a> {
 }
 
 impl<'a> BitReader<'a> {
+    /// Start reading at the beginning of `data`.
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             data,
@@ -261,6 +262,7 @@ pub struct BitWriter {
 }
 
 impl BitWriter {
+    /// An empty writer.
     pub fn new() -> Self {
         Self {
             data: Vec::new(),
@@ -269,6 +271,7 @@ impl BitWriter {
         }
     }
 
+    /// An empty writer whose output buffer is pre-allocated for `cap` bytes.
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             data: Vec::with_capacity(cap),
@@ -334,6 +337,7 @@ impl BitWriter {
         self.write_u32(value as u32, n);
     }
 
+    /// Append a single bit.
     pub fn write_bit(&mut self, bit: bool) {
         self.write_u32(bit as u32, 1);
     }
@@ -352,6 +356,7 @@ impl BitWriter {
         self.write_bit(true);
     }
 
+    /// Append one whole byte (8 bits).
     pub fn write_byte(&mut self, b: u8) {
         self.write_u32(b as u32, 8);
     }
@@ -431,6 +436,7 @@ pub struct BitReaderLsb<'a> {
 }
 
 impl<'a> BitReaderLsb<'a> {
+    /// Start reading at the beginning of `data`.
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             data,
@@ -453,6 +459,7 @@ impl<'a> BitReaderLsb<'a> {
         }
     }
 
+    /// Bits already consumed from the logical stream.
     pub fn bit_position(&self) -> u64 {
         self.byte_pos as u64 * 8 - self.bits_in_acc as u64
     }
@@ -467,6 +474,7 @@ impl<'a> BitReaderLsb<'a> {
         self.bits_in_acc as u64 + ((self.data.len() - self.byte_pos) as u64) * 8
     }
 
+    /// True if the reader is positioned on a byte boundary.
     pub fn is_byte_aligned(&self) -> bool {
         self.bits_in_acc % 8 == 0
     }
@@ -489,6 +497,7 @@ impl<'a> BitReaderLsb<'a> {
         }
     }
 
+    /// Read `n` bits (0..=32) as an unsigned integer.
     pub fn read_u32(&mut self, n: u32) -> Result<u32> {
         debug_assert!(n <= 32, "BitReaderLsb::read_u32 supports up to 32 bits");
         if n == 0 {
@@ -507,6 +516,7 @@ impl<'a> BitReaderLsb<'a> {
         Ok(v)
     }
 
+    /// Read `n` bits (0..=64) as an unsigned integer (low half first).
     pub fn read_u64(&mut self, n: u32) -> Result<u64> {
         debug_assert!(n <= 64);
         if n == 0 {
@@ -520,6 +530,7 @@ impl<'a> BitReaderLsb<'a> {
         Ok(lo | (hi << 32))
     }
 
+    /// Read `n` bits as a signed integer, sign-extended from the high bit.
     pub fn read_i32(&mut self, n: u32) -> Result<i32> {
         if n == 0 {
             return Ok(0);
@@ -529,6 +540,7 @@ impl<'a> BitReaderLsb<'a> {
         Ok((raw << shift) >> shift)
     }
 
+    /// Read a single bit as a bool.
     pub fn read_bit(&mut self) -> Result<bool> {
         Ok(self.read_u32(1)? != 0)
     }
@@ -606,6 +618,7 @@ pub struct BitWriterLsb {
 }
 
 impl BitWriterLsb {
+    /// An empty writer.
     pub fn new() -> Self {
         Self {
             data: Vec::new(),
@@ -614,6 +627,7 @@ impl BitWriterLsb {
         }
     }
 
+    /// An empty writer whose output buffer is pre-allocated for `cap` bytes.
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             data: Vec::with_capacity(cap),
@@ -622,6 +636,7 @@ impl BitWriterLsb {
         }
     }
 
+    /// Total bits written so far (including any in the unflushed accumulator).
     pub fn bit_position(&self) -> u64 {
         self.data.len() as u64 * 8 + self.bits_in_acc as u64
     }
@@ -637,6 +652,7 @@ impl BitWriterLsb {
         self.bits_in_acc % 8 == 0
     }
 
+    /// Append `n` bits (0..=32) from the low `n` bits of `value`, LSB first.
     pub fn write_u32(&mut self, value: u32, n: u32) {
         debug_assert!(n <= 32, "BitWriterLsb::write_u32 supports up to 32 bits");
         if n == 0 {
@@ -653,6 +669,7 @@ impl BitWriterLsb {
         }
     }
 
+    /// Append up to 64 bits (low half first).
     pub fn write_u64(&mut self, value: u64, n: u32) {
         debug_assert!(n <= 64);
         if n <= 32 {
@@ -674,10 +691,12 @@ impl BitWriterLsb {
         self.write_u32(value as u32, n);
     }
 
+    /// Append a single bit.
     pub fn write_bit(&mut self, bit: bool) {
         self.write_u32(bit as u32, 1);
     }
 
+    /// Append one whole byte (8 bits).
     pub fn write_byte(&mut self, b: u8) {
         self.write_u32(b as u32, 8);
     }
@@ -710,6 +729,7 @@ impl BitWriterLsb {
         &self.data
     }
 
+    /// Pad with zero bits to the next byte boundary, then return the bytes.
     pub fn finish(mut self) -> Vec<u8> {
         if self.bits_in_acc > 0 {
             self.data.push((self.acc & 0xFF) as u8);

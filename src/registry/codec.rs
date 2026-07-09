@@ -34,6 +34,7 @@ use crate::{
 
 /// A packet-to-frame decoder.
 pub trait Decoder: Send {
+    /// Identifier of the codec this decoder handles.
     fn codec_id(&self) -> &CodecId;
 
     /// Feed one compressed packet. May or may not produce a frame immediately —
@@ -128,15 +129,22 @@ pub trait Decoder: Send {
 
 /// A frame-to-packet encoder.
 pub trait Encoder: Send {
+    /// Identifier of the codec this encoder produces.
     fn codec_id(&self) -> &CodecId;
 
     /// Parameters describing this encoder's output stream (to feed into a muxer).
     fn output_params(&self) -> &CodecParameters;
 
+    /// Feed one uncompressed frame. May or may not produce a packet
+    /// immediately — call `receive_packet` in a loop afterwards.
     fn send_frame(&mut self, frame: &Frame) -> Result<()>;
 
+    /// Pull the next encoded packet, if any. Returns `Error::NeedMore`
+    /// when the encoder needs another frame (or a `flush`).
     fn receive_packet(&mut self) -> Result<Packet>;
 
+    /// Signal end of input: drain internal lookahead so the remaining
+    /// packets become available via `receive_packet`.
     fn flush(&mut self) -> Result<()>;
 
     /// Advisory: announce the runtime environment. Same semantics as
@@ -232,9 +240,13 @@ pub type EncoderFactory = fn(params: &CodecParameters) -> Result<Box<dyn Encoder
 /// [`CodecInfo::new`] plus the builder methods below.
 #[non_exhaustive]
 pub struct CodecInfo {
+    /// Canonical codec identifier this entry registers.
     pub id: CodecId,
+    /// Capability description (media kind, feature flags, priority).
     pub capabilities: CodecCapabilities,
+    /// Factory producing a fresh decoder instance, if decode is supported.
     pub decoder_factory: Option<DecoderFactory>,
+    /// Factory producing a fresh encoder instance, if encode is supported.
     pub encoder_factory: Option<EncoderFactory>,
     /// Probe function that returns a confidence in `0.0..=1.0` for a
     /// given [`ProbeContext`]. `None` means "confidence 1.0 for every
@@ -298,16 +310,19 @@ impl CodecInfo {
         self
     }
 
+    /// Builder: attach the decoder factory.
     pub fn decoder(mut self, factory: DecoderFactory) -> Self {
         self.decoder_factory = Some(factory);
         self
     }
 
+    /// Builder: attach the encoder factory.
     pub fn encoder(mut self, factory: EncoderFactory) -> Self {
         self.encoder_factory = Some(factory);
         self
     }
 
+    /// Builder: attach a confidence probe (see [`CodecInfo::probe`]).
     pub fn probe(mut self, probe: ProbeFn) -> Self {
         self.probe = Some(probe);
         self
@@ -373,8 +388,11 @@ impl CodecInfo {
 /// during `make_decoder` / `make_encoder` lookups.
 #[derive(Clone)]
 pub struct CodecImplementation {
+    /// Capability description copied from the originating [`CodecInfo`].
     pub caps: CodecCapabilities,
+    /// Decoder factory, if this implementation can decode.
     pub make_decoder: Option<DecoderFactory>,
+    /// Encoder factory, if this implementation can encode.
     pub make_encoder: Option<EncoderFactory>,
     /// Encoder options schema declared via
     /// [`CodecInfo::encoder_options`]. `None` means the encoder accepts
@@ -382,6 +400,9 @@ pub struct CodecImplementation {
     /// still be rejected by the factory if the encoder calls
     /// `parse_options` — this is purely informational for discovery).
     pub encoder_options_schema: Option<&'static [OptionField]>,
+    /// Decoder options schema declared via
+    /// [`CodecInfo::decoder_options`]; same semantics as the encoder
+    /// schema above.
     pub decoder_options_schema: Option<&'static [OptionField]>,
     /// HW backend identifier copied verbatim from the originating
     /// [`CodecInfo::engine_id`]. `Some("nvidia"/"vaapi"/...)` on HW
@@ -396,6 +417,9 @@ pub struct CodecImplementation {
     pub engine_probe: Option<crate::engine::EngineProbeFn>,
 }
 
+/// Registry mapping codec ids and container tags to their registered
+/// implementations; the lookup point behind `make_decoder` /
+/// `make_encoder` / `resolve_tag`.
 #[derive(Default)]
 pub struct CodecRegistry {
     /// id → list of implementations. Each registered codec appends one
@@ -419,6 +443,7 @@ struct RegistrationRecord {
 }
 
 impl CodecRegistry {
+    /// An empty registry (same as `Default`).
     pub fn new() -> Self {
         Self::default()
     }
@@ -494,6 +519,7 @@ impl CodecRegistry {
         }
     }
 
+    /// Whether at least one registered implementation of `id` can decode.
     pub fn has_decoder(&self, id: &CodecId) -> bool {
         self.impls
             .get(id)
@@ -501,6 +527,7 @@ impl CodecRegistry {
             .unwrap_or(false)
     }
 
+    /// Whether at least one registered implementation of `id` can encode.
     pub fn has_encoder(&self, id: &CodecId) -> bool {
         self.impls
             .get(id)
@@ -601,6 +628,7 @@ impl CodecRegistry {
             .map(|(id, _)| id)
     }
 
+    /// Iterate codec ids that have at least one encoder implementation.
     pub fn encoder_ids(&self) -> impl Iterator<Item = &CodecId> {
         self.impls
             .iter()

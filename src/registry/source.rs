@@ -178,8 +178,12 @@ pub trait FrameSource: Send {
 /// downstream consumers. Match arms must include a wildcard.
 #[non_exhaustive]
 pub enum SourceOutput {
+    /// A raw byte stream — feed it to container probing / a demuxer.
     Bytes(Box<dyn BytesSource>),
+    /// Already-demuxed compressed packets — feed them to decoders.
     Packets(Box<dyn PacketSource>),
+    /// Already-decoded frames (e.g. a capture device) — feed them to
+    /// filters / encoders directly.
     Frames(Box<dyn FrameSource>),
     /// A multi-title source (BD-ROM, DVD-Video, multi-edition MKV).
     /// Callers fan out: each title is opened independently via

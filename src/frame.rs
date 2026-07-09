@@ -12,7 +12,9 @@ use crate::vector::VectorFrame;
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Frame {
+    /// Uncompressed audio samples.
     Audio(AudioFrame),
+    /// One uncompressed video picture.
     Video(VideoFrame),
     /// A single subtitle cue. Timing is carried inside the cue itself
     /// (`start_us`/`end_us`) so it's independent of container time bases,
@@ -27,6 +29,8 @@ pub enum Frame {
 }
 
 impl Frame {
+    /// Presentation timestamp of the frame in its stream's time base
+    /// (a subtitle cue reports its `start_us`); `None` if unknown.
     pub fn pts(&self) -> Option<i64> {
         match self {
             Self::Audio(a) => a.pts,
@@ -56,6 +60,7 @@ pub struct AudioFrame {
     /// Number of samples *per channel* in this frame. Variable per-frame
     /// for VBR codecs and on partial flushes.
     pub samples: u32,
+    /// Presentation timestamp in the stream's time base; `None` if unknown.
     pub pts: Option<i64>,
     /// Raw sample bytes. Length matches `format.plane_count(channels)`
     /// from the stream's `CodecParameters`.
@@ -70,14 +75,19 @@ pub struct AudioFrame {
 /// because real-time playback moves thousands per second per stream.
 #[derive(Clone, Debug)]
 pub struct VideoFrame {
+    /// Presentation timestamp in the stream's time base; `None` if unknown.
     pub pts: Option<i64>,
     /// One entry per plane (e.g., 3 for Yuv420P). Each entry is `(stride, bytes)`.
     pub planes: Vec<VideoPlane>,
 }
 
+/// One plane of a [`VideoFrame`]: row-major sample bytes plus the
+/// stride between rows.
 #[derive(Clone, Debug)]
 pub struct VideoPlane {
     /// Bytes per row in `data`.
     pub stride: usize,
+    /// Raw plane bytes, `stride × rows` long (rows may carry padding
+    /// beyond the visible width).
     pub data: Vec<u8>,
 }

@@ -88,26 +88,47 @@ impl AttachedPicture {
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PictureType {
+    /// Picture with no more specific role.
     Other = 0x00,
+    /// 32×32 pixel file icon (PNG only, per the ID3v2 spec).
     FileIcon32x32 = 0x01,
+    /// Other file icon (no size restriction).
     FileIcon = 0x02,
+    /// Front cover of the release.
     FrontCover = 0x03,
+    /// Back cover of the release.
     BackCover = 0x04,
+    /// Leaflet page from the release packaging.
     LeafletPage = 0x05,
+    /// Picture of the physical media itself (e.g. disc label).
     Media = 0x06,
+    /// Lead artist / lead performer / soloist.
     LeadArtist = 0x07,
+    /// Artist or performer.
     Artist = 0x08,
+    /// Conductor.
     Conductor = 0x09,
+    /// Band or orchestra.
     BandOrchestra = 0x0A,
+    /// Composer.
     Composer = 0x0B,
+    /// Lyricist or text writer.
     Lyricist = 0x0C,
+    /// Recording location.
     RecordingLocation = 0x0D,
+    /// Photo taken during the recording.
     DuringRecording = 0x0E,
+    /// Photo taken during a performance.
     DuringPerformance = 0x0F,
+    /// Movie or video screen capture.
     MovieScreenCapture = 0x10,
+    /// "A bright coloured fish" — verbatim spec-assigned role.
     ABrightColouredFish = 0x11,
+    /// Illustration.
     Illustration = 0x12,
+    /// Band or artist logotype.
     BandLogo = 0x13,
+    /// Publisher or studio logotype.
     PublisherLogo = 0x14,
     /// Catch-all for unrecognised or out-of-range codes.
     Unknown = 0xFF,

@@ -19,9 +19,13 @@ use super::source::SourceRegistry;
 /// call each sibling's `register` to fill it in.
 #[derive(Default)]
 pub struct RuntimeContext {
+    /// Codec registry (decoder/encoder factories, tags, probes).
     pub codecs: CodecRegistry,
+    /// Container registry (demuxer/muxer factories, extensions, probes).
     pub containers: ContainerRegistry,
+    /// Source registry (URL-scheme / device input drivers).
     pub sources: SourceRegistry,
+    /// Stream-filter registry (frame-to-frame transforms).
     pub filters: FilterRegistry,
 }
 

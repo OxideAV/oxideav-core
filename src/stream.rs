@@ -12,10 +12,12 @@ use crate::time::TimeBase;
 pub struct CodecId(pub String);
 
 impl CodecId {
+    /// Build a `CodecId` from any string-like codec name (e.g. `"h264"`).
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 
+    /// The codec name as a borrowed string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -80,14 +82,19 @@ impl CodecTag {
         Self::Fourcc(out)
     }
 
+    /// Build a [`CodecTag::WaveFormat`] tag from a `wFormatTag` value.
     pub fn wave_format(tag: u16) -> Self {
         Self::WaveFormat(tag)
     }
 
+    /// Build a [`CodecTag::Mp4ObjectType`] tag from an MP4
+    /// ObjectTypeIndication byte.
     pub fn mp4_object_type(oti: u8) -> Self {
         Self::Mp4ObjectType(oti)
     }
 
+    /// Build a [`CodecTag::Matroska`] tag from a full Matroska
+    /// `CodecID` string (e.g. `"A_VORBIS"`).
     pub fn matroska(id: impl Into<String>) -> Self {
         Self::Matroska(id.into())
     }
@@ -154,9 +161,15 @@ pub struct ProbeContext<'a> {
     /// Audio: bits per sample (from WAVEFORMATEX, MP4 sample entry,
     /// Matroska `BitDepth`, etc.).
     pub bits_per_sample: Option<u16>,
+    /// Audio: channel count from the container's stream header.
     pub channels: Option<u16>,
+    /// Audio: sample rate in Hz from the container's stream header.
     pub sample_rate: Option<u32>,
+    /// Video: coded frame width in pixels from the container's stream
+    /// header.
     pub width: Option<u32>,
+    /// Video: coded frame height in pixels from the container's stream
+    /// header.
     pub height: Option<u32>,
 }
 
@@ -175,36 +188,46 @@ impl<'a> ProbeContext<'a> {
         }
     }
 
+    /// Builder method: attach the raw container-level stream-format
+    /// blob (WAVEFORMATEX, BITMAPINFOHEADER, MP4 sample-entry bytes,
+    /// Matroska `CodecPrivate`, ...).
     pub fn header(mut self, h: &'a [u8]) -> Self {
         self.header = Some(h);
         self
     }
 
+    /// Builder method: attach the first packet's bytes, when the
+    /// demuxer has already read one.
     pub fn packet(mut self, p: &'a [u8]) -> Self {
         self.packet = Some(p);
         self
     }
 
+    /// Builder method: set the audio bits-per-sample hint.
     pub fn bits(mut self, n: u16) -> Self {
         self.bits_per_sample = Some(n);
         self
     }
 
+    /// Builder method: set the audio channel-count hint.
     pub fn channels(mut self, n: u16) -> Self {
         self.channels = Some(n);
         self
     }
 
+    /// Builder method: set the audio sample-rate hint (Hz).
     pub fn sample_rate(mut self, n: u32) -> Self {
         self.sample_rate = Some(n);
         self
     }
 
+    /// Builder method: set the video frame-width hint (pixels).
     pub fn width(mut self, n: u32) -> Self {
         self.width = Some(n);
         self
     }
 
+    /// Builder method: set the video frame-height hint (pixels).
     pub fn height(mut self, n: u32) -> Self {
         self.height = Some(n);
         self
@@ -271,12 +294,20 @@ impl CodecResolver for NullCodecResolver {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct CodecParameters {
+    /// Registry identifier of the codec this stream is encoded with.
     pub codec_id: CodecId,
+    /// Whether this stream is audio, video, subtitle, or data. Set by
+    /// the constructor ([`audio`](Self::audio), [`video`](Self::video),
+    /// [`subtitle`](Self::subtitle), [`data`](Self::data)).
     pub media_type: MediaType,
 
     // Audio-specific
+    /// Audio: sample rate in Hz. `None` for non-audio streams.
     pub sample_rate: Option<u32>,
+    /// Audio: number of channels. See [`Self::resolved_channels`] for
+    /// the layout-aware accessor.
     pub channels: Option<u16>,
+    /// Audio: sample format of the decoded output (or encoder input).
     pub sample_format: Option<SampleFormat>,
     /// Speaker layout for the audio stream. **This is the canonical
     /// answer to "what layout does this stream have?"** — layout is a
@@ -291,14 +322,21 @@ pub struct CodecParameters {
     pub channel_layout: Option<ChannelLayout>,
 
     // Video-specific
+    /// Video: coded frame width in pixels. `None` for non-video streams.
     pub width: Option<u32>,
+    /// Video: coded frame height in pixels. `None` for non-video streams.
     pub height: Option<u32>,
+    /// Video: pixel format of the decoded output (or encoder input).
     pub pixel_format: Option<PixelFormat>,
+    /// Video: nominal frame rate in frames per second, as a rational
+    /// (e.g. 30000/1001). `None` when unknown or variable.
     pub frame_rate: Option<Rational>,
 
     /// Per-codec setup bytes (e.g., SPS/PPS, OpusHead). Format defined by codec.
     pub extradata: Vec<u8>,
 
+    /// Nominal stream bit rate in bits per second, when the container
+    /// or encoder declares one.
     pub bit_rate: Option<u64>,
 
     /// Codec-specific tuning knobs (e.g. `{"interlace": "true"}` for PNG's
@@ -365,6 +403,10 @@ pub struct CodecParameters {
 }
 
 impl CodecParameters {
+    /// Construct audio codec parameters with every optional field
+    /// unset. Chain builder methods ([`channels`](Self::channels),
+    /// [`channel_layout`](Self::channel_layout), ...) or assign fields
+    /// directly to fill in the format.
     pub fn audio(codec_id: CodecId) -> Self {
         Self {
             codec_id,
@@ -405,6 +447,9 @@ impl CodecParameters {
             && self.pixel_format == other.pixel_format
     }
 
+    /// Construct video codec parameters with every optional field
+    /// unset. Assign `width` / `height` / `pixel_format` (or use the
+    /// builder methods) to fill in the format.
     pub fn video(codec_id: CodecId) -> Self {
         Self {
             codec_id,
@@ -596,10 +641,18 @@ impl CodecParameters {
 /// Description of a single stream inside a container.
 #[derive(Clone, Debug)]
 pub struct StreamInfo {
+    /// 0-based index of the stream within its container.
     pub index: u32,
+    /// Time base in which this stream's packet timestamps (and
+    /// `duration` / `start_time` below) are expressed.
     pub time_base: TimeBase,
+    /// Stream duration in `time_base` units, when the container
+    /// declares one.
     pub duration: Option<i64>,
+    /// Presentation timestamp of the first packet, in `time_base`
+    /// units, when known.
     pub start_time: Option<i64>,
+    /// Codec-level parameters (codec id, format, extradata, ...).
     pub params: CodecParameters,
 }
 

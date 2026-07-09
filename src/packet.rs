@@ -40,6 +40,8 @@ pub struct Packet {
 }
 
 impl Packet {
+    /// Construct a packet with the given payload and no timing
+    /// information (all timestamps `None`, default flags).
     pub fn new(stream_index: u32, time_base: TimeBase, data: Vec<u8>) -> Self {
         Self {
             stream_index,
@@ -52,21 +54,26 @@ impl Packet {
         }
     }
 
+    /// Builder: set the presentation timestamp (in `time_base` units).
     pub fn with_pts(mut self, pts: i64) -> Self {
         self.pts = Some(pts);
         self
     }
 
+    /// Builder: set the decode timestamp (in `time_base` units).
     pub fn with_dts(mut self, dts: i64) -> Self {
         self.dts = Some(dts);
         self
     }
 
+    /// Builder: set the packet duration (in `time_base` units).
     pub fn with_duration(mut self, d: i64) -> Self {
         self.duration = Some(d);
         self
     }
 
+    /// Builder: mark (or unmark) the packet as a keyframe /
+    /// random-access point.
     pub fn with_keyframe(mut self, kf: bool) -> Self {
         self.flags.keyframe = kf;
         self

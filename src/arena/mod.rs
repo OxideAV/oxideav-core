@@ -580,8 +580,11 @@ fn align_up(n: usize, align: usize) -> Option<usize> {
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug)]
 pub struct FrameHeader {
+    /// Visible picture width in pixels.
     pub width: u32,
+    /// Visible picture height in pixels.
     pub height: u32,
+    /// Pixel format of the plane data in the arena.
     pub pixel_format: PixelFormat,
     /// Presentation timestamp in stream time-base units. `None` when
     /// the codec did not surface one (e.g. a still image).

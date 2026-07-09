@@ -9,6 +9,7 @@ use crate::rational::Rational;
 pub struct TimeBase(pub Rational);
 
 impl TimeBase {
+    /// Construct a time base of `num/den` seconds per tick.
     pub const fn new(num: i64, den: i64) -> Self {
         Self(Rational::new(num, den))
     }
@@ -37,6 +38,7 @@ impl TimeBase {
         self.0.den
     }
 
+    /// The underlying seconds-per-tick fraction.
     pub fn as_rational(&self) -> Rational {
         self.0
     }
@@ -157,11 +159,14 @@ impl TimeBase {
 /// A timestamp in a particular time base.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Timestamp {
+    /// Tick count in `base` units.
     pub value: i64,
+    /// The time base the tick count is expressed in.
     pub base: TimeBase,
 }
 
 impl Timestamp {
+    /// Construct a timestamp of `value` ticks in `base`.
     pub const fn new(value: i64, base: TimeBase) -> Self {
         Self { value, base }
     }
@@ -172,10 +177,13 @@ impl Timestamp {
         Self::new(base.ticks_of(seconds), base)
     }
 
+    /// The timestamp as fractional seconds (`value × base`).
     pub fn seconds(&self) -> f64 {
         self.base.seconds_of(self.value)
     }
 
+    /// Rescale onto `target` with half-away-from-zero rounding; the
+    /// saturating/defaulting semantics of [`rescale`].
     pub fn rescale(&self, target: TimeBase) -> Self {
         Self {
             value: self.base.rescale(self.value, target),

@@ -37,23 +37,34 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 ///   would approximate, for callers that need to detect inexactness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rational {
+    /// Numerator. Carries the sign after normalization; stored verbatim
+    /// otherwise.
     pub num: i64,
+    /// Denominator. Kept as constructed (may be negative or zero — see
+    /// the type-level docs for how operations treat those).
     pub den: i64,
 }
 
 impl Rational {
+    /// Construct the fraction `num/den`, stored verbatim (no reduction
+    /// or sign normalization).
     pub const fn new(num: i64, den: i64) -> Self {
         Self { num, den }
     }
 
+    /// The canonical zero: `0/1`.
     pub const fn zero() -> Self {
         Self { num: 0, den: 1 }
     }
 
+    /// `true` when the numerator is zero (the denoted value is zero for
+    /// any non-zero denominator).
     pub fn is_zero(&self) -> bool {
         self.num == 0
     }
 
+    /// The denoted value as an `f64` (lossy for terms above 2^53;
+    /// `±∞`/NaN for zero denominators).
     pub fn as_f64(&self) -> f64 {
         self.num as f64 / self.den as f64
     }

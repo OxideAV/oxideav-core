@@ -104,18 +104,29 @@ impl PortSpec {
 /// current filter consumes them.
 #[derive(Clone, Debug)]
 pub enum PortParams {
+    /// An audio port.
     Audio {
+        /// Samples per second per channel.
         sample_rate: u32,
+        /// Channel count.
         channels: u16,
+        /// Sample format flowing through the port.
         format: SampleFormat,
     },
+    /// A video port.
     Video {
+        /// Picture width in pixels.
         width: u32,
+        /// Picture height in pixels.
         height: u32,
+        /// Pixel format flowing through the port.
         format: PixelFormat,
+        /// Time base the port's frame timestamps are expressed in.
         time_base: TimeBase,
     },
+    /// A subtitle-cue port (placeholder — no current filter emits it).
     Subtitle,
+    /// A metadata/data port (placeholder — no current filter emits it).
     Metadata,
 }
 

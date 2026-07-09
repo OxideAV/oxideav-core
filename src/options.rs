@@ -40,6 +40,7 @@ pub struct CodecOptions {
 }
 
 impl CodecOptions {
+    /// Create an empty option bag (same as `CodecOptions::default()`).
     pub fn new() -> Self {
         Self::default()
     }
@@ -63,6 +64,8 @@ impl CodecOptions {
         }
     }
 
+    /// Look up the value for key `k`, or `None` if the key was never
+    /// set.
     pub fn get(&self, k: &str) -> Option<&str> {
         self.entries
             .iter()
@@ -70,14 +73,17 @@ impl CodecOptions {
             .map(|(_, v)| v.as_str())
     }
 
+    /// `true` when the bag contains no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Number of entries in the bag.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Iterate over `(key, value)` pairs in insertion order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
@@ -143,10 +149,15 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
 /// reject malformed values up front.
 #[derive(Clone, Copy, Debug)]
 pub enum OptionKind {
+    /// Boolean; accepts `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`.
     Bool,
+    /// Unsigned 32-bit integer.
     U32,
+    /// Signed 32-bit integer.
     I32,
+    /// 32-bit floating point.
     F32,
+    /// Free-form string; any value is accepted verbatim.
     String,
     /// Enumeration: the only accepted values are the strings in this
     /// slice. Matching is case-sensitive.
@@ -157,38 +168,53 @@ pub enum OptionKind {
 /// chooses the appropriate `as_*` accessor based on the field name.
 #[derive(Clone, Debug)]
 pub enum OptionValue {
+    /// A coerced boolean value.
     Bool(bool),
+    /// A coerced unsigned 32-bit integer.
     U32(u32),
+    /// A coerced signed 32-bit integer.
     I32(i32),
+    /// A coerced 32-bit float.
     F32(f32),
+    /// A string value (also used for [`OptionKind::Enum`] matches).
     String(String),
 }
 
 impl OptionValue {
+    /// Extract the boolean, or [`Error::InvalidData`] when the value is
+    /// a different kind.
     pub fn as_bool(&self) -> Result<bool> {
         match self {
             OptionValue::Bool(b) => Ok(*b),
             other => Err(Error::invalid(format!("expected bool, got {other:?}"))),
         }
     }
+    /// Extract the `u32`, or [`Error::InvalidData`] when the value is a
+    /// different kind.
     pub fn as_u32(&self) -> Result<u32> {
         match self {
             OptionValue::U32(n) => Ok(*n),
             other => Err(Error::invalid(format!("expected u32, got {other:?}"))),
         }
     }
+    /// Extract the `i32`, or [`Error::InvalidData`] when the value is a
+    /// different kind.
     pub fn as_i32(&self) -> Result<i32> {
         match self {
             OptionValue::I32(n) => Ok(*n),
             other => Err(Error::invalid(format!("expected i32, got {other:?}"))),
         }
     }
+    /// Extract the `f32`, or [`Error::InvalidData`] when the value is a
+    /// different kind.
     pub fn as_f32(&self) -> Result<f32> {
         match self {
             OptionValue::F32(n) => Ok(*n),
             other => Err(Error::invalid(format!("expected f32, got {other:?}"))),
         }
     }
+    /// Extract the string (also the shape of `Enum` matches), or
+    /// [`Error::InvalidData`] when the value is a different kind.
     pub fn as_str(&self) -> Result<&str> {
         match self {
             OptionValue::String(s) => Ok(s.as_str()),
@@ -202,9 +228,15 @@ impl OptionValue {
 /// consumes.
 #[derive(Debug)]
 pub struct OptionField {
+    /// Option key as it appears in the [`CodecOptions`] bag.
     pub name: &'static str,
+    /// Declared type used to coerce and validate the raw string value.
     pub kind: OptionKind,
+    /// Value used when the key is absent from the bag (documentation /
+    /// introspection — the actual default lives in the struct's
+    /// `Default` impl).
     pub default: OptionValue,
+    /// One-line human-readable description for `--help`-style listings.
     pub help: &'static str,
 }
 
@@ -232,7 +264,12 @@ pub struct OptionField {
 /// }
 /// ```
 pub trait CodecOptionsStruct: Default + 'static {
+    /// Static schema listing every option key this struct consumes,
+    /// with its declared kind, default, and help text.
     const SCHEMA: &'static [OptionField];
+    /// Write one coerced value into the struct. `key` is guaranteed to
+    /// be present in [`SCHEMA`](Self::SCHEMA) and `value` to match the
+    /// declared [`OptionKind`] when called via [`parse_options`].
     fn apply(&mut self, key: &str, value: &OptionValue) -> Result<()>;
 }
 

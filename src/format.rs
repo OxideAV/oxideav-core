@@ -2,20 +2,26 @@
 //!
 //! Audio channel ordering follows SMPTE 2036-2 / ITU-R BS.775 conventions
 //! for surround layouts; per-channel positions are named with the
-//! WAVEFORMATEXTENSIBLE / FFmpeg "front-left, front-right, …" vocabulary.
+//! WAVEFORMATEXTENSIBLE "front-left, front-right, …" vocabulary.
 
+/// Broad category of a stream's payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MediaType {
+    /// Audio samples.
     Audio,
+    /// Video pictures.
     Video,
+    /// Timed-text / bitmap subtitle cues.
     Subtitle,
+    /// Opaque non-media payload (timecodes, klv, chapters, …).
     Data,
+    /// Category not (yet) determined.
     Unknown,
 }
 
 /// A single speaker position within a multi-channel audio layout.
 ///
-/// Names follow the WAVEFORMATEXTENSIBLE / FFmpeg / SMPTE convention.
+/// Names follow the WAVEFORMATEXTENSIBLE / SMPTE convention.
 /// `Side*` and `Back*` are kept distinct (mirroring 7.1's
 /// L/R + Ls/Rs + Lb/Rb separation) so codecs that surface the
 /// distinction don't collapse it. `Lr`/`Rr` (rear / back-rear) are aliases
@@ -371,15 +377,20 @@ pub enum SampleFormat {
     F32 = 5,
     /// 64-bit IEEE float, interleaved.
     F64 = 6,
-    /// Planar variants — one plane per channel.
+    /// Unsigned 8-bit, planar (one plane per channel).
     U8P = 7,
+    /// Signed 16-bit little-endian, planar (one plane per channel).
     S16P = 8,
+    /// Signed 32-bit little-endian, planar (one plane per channel).
     S32P = 9,
+    /// 32-bit IEEE float, planar (one plane per channel).
     F32P = 10,
+    /// 64-bit IEEE float, planar (one plane per channel).
     F64P = 11,
 }
 
 impl SampleFormat {
+    /// `true` for the planar (one-plane-per-channel) variants.
     pub fn is_planar(&self) -> bool {
         matches!(
             self,
@@ -398,6 +409,7 @@ impl SampleFormat {
         }
     }
 
+    /// `true` for the IEEE-float variants (32- or 64-bit, either layout).
     pub fn is_float(&self) -> bool {
         matches!(self, Self::F32 | Self::F64 | Self::F32P | Self::F64P)
     }
@@ -545,7 +557,7 @@ pub enum PixelFormat {
     // High-bit-depth GBR(A) layouts used by MagicYUV, JPEG 2000, OpenEXR,
     // TIFF and similar workflows that need lossless RGB at 10/12/14 bits
     // per channel. Planes are ordered G, B, R (and A for the `Gbrap*`
-    // variants) — matching the ffmpeg `AV_PIX_FMT_GBRP*LE` family — and
+    // variants) — and
     // each sample is stored as a 16-bit little-endian word with the
     // top bits zero. There is no native 8-bit `Gbrp` variant in this
     // enum yet because no in-tree codec needs it; if one is added later

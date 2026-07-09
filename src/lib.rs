@@ -6,6 +6,8 @@
 //! [`RuntimeContext`] bundles all four registries (codec / container /
 //! source / filter) into a single value that consumers pass around.
 
+#![warn(missing_docs)]
+
 pub mod arena;
 pub mod bits;
 pub mod capabilities;

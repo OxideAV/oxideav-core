@@ -85,12 +85,14 @@ pub trait Demuxer: Send {
 
 /// Writes packets into a container.
 pub trait Muxer: Send {
+    /// Registered name of the container format being written.
     fn format_name(&self) -> &str;
 
     /// Write the container header. Must be called after stream configuration
     /// and before the first `write_packet`.
     fn write_header(&mut self) -> Result<()>;
 
+    /// Write one compressed packet into the container.
     fn write_packet(&mut self, packet: &Packet) -> Result<()>;
 
     /// Finalize the file (write index, patch in total sizes, etc.).
@@ -120,7 +122,9 @@ pub type OpenMuxerFn =
 /// (raw MP3 with no ID3v2, headerless tracker formats) need it to break
 /// ties with otherwise weak signatures.
 pub struct ProbeData<'a> {
+    /// First few KB of the input, for magic-byte matching.
     pub buf: &'a [u8],
+    /// File-extension hint (lowercase, no leading dot), when known.
     pub ext: Option<&'a str>,
 }
 
@@ -155,6 +159,9 @@ impl<T: Write + Seek + Send> WriteSeek for T {}
 
 // ───────────────────────── ContainerRegistry ─────────────────────────
 
+/// Registry of container formats: demuxer/muxer factories keyed by
+/// format name, plus the extension map and content probes that back
+/// input auto-detection.
 #[derive(Default)]
 pub struct ContainerRegistry {
     demuxers: HashMap<String, OpenDemuxerFn>,
@@ -168,18 +175,23 @@ pub struct ContainerRegistry {
 }
 
 impl ContainerRegistry {
+    /// An empty registry (same as `Default`).
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Register a demuxer factory under a container format name.
     pub fn register_demuxer(&mut self, name: &str, open: OpenDemuxerFn) {
         self.demuxers.insert(name.to_owned(), open);
     }
 
+    /// Register a muxer factory under a container format name.
     pub fn register_muxer(&mut self, name: &str, open: OpenMuxerFn) {
         self.muxers.insert(name.to_owned(), open);
     }
 
+    /// Map a file extension (case-insensitive) to a registered
+    /// container name, for extension-hint lookups.
     pub fn register_extension(&mut self, ext: &str, container_name: &str) {
         self.extensions
             .insert(ext.to_lowercase(), container_name.to_owned());
@@ -192,10 +204,12 @@ impl ContainerRegistry {
         self.probes.insert(container_name.to_owned(), probe);
     }
 
+    /// Iterate the registered demuxer format names (arbitrary order).
     pub fn demuxer_names(&self) -> impl Iterator<Item = &str> {
         self.demuxers.keys().map(|s| s.as_str())
     }
 
+    /// Iterate the registered muxer format names (arbitrary order).
     pub fn muxer_names(&self) -> impl Iterator<Item = &str> {
         self.muxers.keys().map(|s| s.as_str())
     }

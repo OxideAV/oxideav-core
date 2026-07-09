@@ -103,13 +103,18 @@ impl Default for VectorFrame {
 /// and the PDF `MediaBox` / `CropBox` rectangles.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewBox {
+    /// Left edge of the user-coordinate rectangle.
     pub min_x: f32,
+    /// Top edge of the user-coordinate rectangle.
     pub min_y: f32,
+    /// Width of the user-coordinate rectangle, in user units.
     pub width: f32,
+    /// Height of the user-coordinate rectangle, in user units.
     pub height: f32,
 }
 
 impl ViewBox {
+    /// Build a `ViewBox` from its origin and size.
     pub const fn new(min_x: f32, min_y: f32, width: f32, height: f32) -> Self {
         Self {
             min_x,
@@ -127,7 +132,9 @@ impl ViewBox {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Node {
+    /// A drawn path with optional fill and stroke.
     Path(PathNode),
+    /// A nested group applying transform / opacity / clip to its children.
     Group(Group),
     /// An embedded raster image painted into vector space.
     Image(ImageRef),
@@ -174,6 +181,7 @@ pub struct Group {
     /// Optional clip path. Children are clipped to this path's interior
     /// (using the path's own fill rule). `None` means "no clip".
     pub clip: Option<Path>,
+    /// Child nodes, painted in order (later children over earlier ones).
     pub children: Vec<Node>,
     /// Opaque cache key. When `Some(k)`, a downstream rasterizer is free
     /// to memoise the rendered bitmap of this group's content (after
@@ -256,9 +264,13 @@ impl Group {
 /// would normally be `Some` to produce visible output.
 #[derive(Clone, Debug)]
 pub struct PathNode {
+    /// Path geometry, in the local user space of the enclosing group.
     pub path: Path,
+    /// Paint for the path interior. `None` means "not filled".
     pub fill: Option<Paint>,
+    /// Stroke style for the path outline. `None` means "not stroked".
     pub stroke: Option<Stroke>,
+    /// Fill rule used for `fill` (and for hit-testing the interior).
     pub fill_rule: FillRule,
 }
 
@@ -298,36 +310,45 @@ impl PathNode {
 /// All coordinates are in the local user space of the enclosing group.
 #[derive(Clone, Debug, Default)]
 pub struct Path {
+    /// Drawing commands, executed in order.
     pub commands: Vec<PathCommand>,
 }
 
 impl Path {
+    /// An empty path with no commands.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Append a [`PathCommand::MoveTo`] — start a new subpath at `p`.
     pub fn move_to(&mut self, p: Point) -> &mut Self {
         self.commands.push(PathCommand::MoveTo(p));
         self
     }
 
+    /// Append a [`PathCommand::LineTo`] — straight line to `p`.
     pub fn line_to(&mut self, p: Point) -> &mut Self {
         self.commands.push(PathCommand::LineTo(p));
         self
     }
 
+    /// Append a [`PathCommand::QuadCurveTo`] — quadratic Bezier to `end`
+    /// with control point `control`.
     pub fn quad_to(&mut self, control: Point, end: Point) -> &mut Self {
         self.commands
             .push(PathCommand::QuadCurveTo { control, end });
         self
     }
 
+    /// Append a [`PathCommand::CubicCurveTo`] — cubic Bezier to `end`
+    /// with control points `c1` and `c2`.
     pub fn cubic_to(&mut self, c1: Point, c2: Point, end: Point) -> &mut Self {
         self.commands
             .push(PathCommand::CubicCurveTo { c1, c2, end });
         self
     }
 
+    /// Append a [`PathCommand::Close`] — close the current subpath.
     pub fn close(&mut self) -> &mut Self {
         self.commands.push(PathCommand::Close);
         self
@@ -348,39 +369,63 @@ impl Path {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum PathCommand {
+    /// Start a new subpath at the given point (SVG `M`).
     MoveTo(Point),
+    /// Straight line from the current point to the given point (SVG `L`).
     LineTo(Point),
+    /// Quadratic Bezier segment from the current point (SVG `Q`).
     QuadCurveTo {
+        /// The single quadratic control point.
         control: Point,
+        /// Segment end point.
         end: Point,
     },
+    /// Cubic Bezier segment from the current point (SVG `C`).
     CubicCurveTo {
+        /// First control point (attached to the segment start).
         c1: Point,
+        /// Second control point (attached to the segment end).
         c2: Point,
+        /// Segment end point.
         end: Point,
     },
     /// SVG `A`-style elliptic arc segment. `x_axis_rot` is in radians
     /// (consistent with `Transform2D::rotate`); `large_arc` / `sweep`
     /// match the SVG flag semantics.
     ArcTo {
+        /// Ellipse radius along its X axis, in user units.
         rx: f32,
+        /// Ellipse radius along its Y axis, in user units.
         ry: f32,
+        /// Rotation of the ellipse's X axis relative to the user-space
+        /// X axis, in radians.
         x_axis_rot: f32,
+        /// When `true`, pick the arc sweep of 180° or more (SVG
+        /// `large-arc-flag`).
         large_arc: bool,
+        /// When `true`, draw the arc in the positive-angle direction
+        /// (SVG `sweep-flag`).
         sweep: bool,
+        /// Arc end point.
         end: Point,
     },
+    /// Close the current subpath with a straight line back to its
+    /// starting point (SVG `Z`).
     Close,
 }
 
 /// 2D point in user-space coordinates.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
+    /// Horizontal coordinate in user units.
     pub x: f32,
+    /// Vertical coordinate in user units (Y grows downward, per the
+    /// SVG / PDF device-space convention used throughout this module).
     pub y: f32,
 }
 
 impl Point {
+    /// Build a point from its coordinates.
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
@@ -403,8 +448,11 @@ impl From<(f32, f32)> for Point {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Paint {
+    /// A single flat RGBA color.
     Solid(Rgba),
+    /// Color stops swept along a straight line.
     LinearGradient(LinearGradient),
+    /// Color stops swept outward from a focal point to a circle.
     RadialGradient(RadialGradient),
 }
 
@@ -415,13 +463,18 @@ pub enum Paint {
 /// IR carries straight alpha to avoid lossy round-trips.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rgba {
+    /// Red channel, `0..=255`.
     pub r: u8,
+    /// Green channel, `0..=255`.
     pub g: u8,
+    /// Blue channel, `0..=255`.
     pub b: u8,
+    /// Straight (non-premultiplied) alpha, `0` transparent to `255` opaque.
     pub a: u8,
 }
 
 impl Rgba {
+    /// Build a color from its four channels (straight alpha).
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
@@ -461,9 +514,13 @@ impl From<Rgba> for Paint {
 /// A linear gradient: color stops sweep along the line `start` → `end`.
 #[derive(Clone, Debug)]
 pub struct LinearGradient {
+    /// Gradient axis start point (offset `0.0`), in user space.
     pub start: Point,
+    /// Gradient axis end point (offset `1.0`), in user space.
     pub end: Point,
+    /// Color stops, ordered by ascending `offset`.
     pub stops: Vec<GradientStop>,
+    /// What to paint past the axis endpoints.
     pub spread: SpreadMethod,
 }
 
@@ -503,10 +560,16 @@ impl LinearGradient {
 /// `None`, it defaults to `center` (the common case).
 #[derive(Clone, Debug)]
 pub struct RadialGradient {
+    /// Center of the outer circle (offset `1.0`), in user space.
     pub center: Point,
+    /// Radius of the outer circle, in user units.
     pub radius: f32,
+    /// Focal point the stops sweep outward from (offset `0.0`).
+    /// `None` defaults to `center`.
     pub focal: Option<Point>,
+    /// Color stops, ordered by ascending `offset`.
     pub stops: Vec<GradientStop>,
+    /// What to paint outside the outer circle.
     pub spread: SpreadMethod,
 }
 
@@ -554,10 +617,12 @@ pub struct GradientStop {
     /// Position of the stop along the gradient axis. `0.0` is the
     /// start, `1.0` is the end.
     pub offset: f32,
+    /// Color at this stop.
     pub color: Rgba,
 }
 
 impl GradientStop {
+    /// Build a stop at `offset` (`0.0..=1.0`) with the given color.
     pub const fn new(offset: f32, color: Rgba) -> Self {
         Self { offset, color }
     }
@@ -579,12 +644,17 @@ pub enum SpreadMethod {
 /// Stroke style for a path's outline.
 #[derive(Clone, Debug)]
 pub struct Stroke {
+    /// Stroke width in user units, centered on the path.
     pub width: f32,
+    /// Paint applied to the stroked outline.
     pub paint: Paint,
+    /// How open-subpath endpoints are drawn.
     pub cap: LineCap,
+    /// How segment corners are drawn.
     pub join: LineJoin,
     /// Miter limit ratio. SVG / PDF default is `4.0`.
     pub miter_limit: f32,
+    /// Optional dash pattern. `None` means a solid (undashed) stroke.
     pub dash: Option<DashPattern>,
 }
 
@@ -649,18 +719,25 @@ impl Stroke {
 /// How an open path's endpoints are drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LineCap {
+    /// Squared-off end flush with the endpoint. SVG / PDF default.
     #[default]
     Butt,
+    /// Semicircular end of radius `width / 2` centered on the endpoint.
     Round,
+    /// Squared-off end extending `width / 2` past the endpoint.
     Square,
 }
 
 /// How two stroke segments meet at a corner.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LineJoin {
+    /// Sharp corner extended to a point, subject to the miter limit.
+    /// SVG / PDF default.
     #[default]
     Miter,
+    /// Corner rounded with a circular arc of radius `width / 2`.
     Round,
+    /// Corner cut off with a straight edge across the outer angle.
     Bevel,
 }
 
@@ -669,7 +746,10 @@ pub enum LineJoin {
 /// phase offset from the path start.
 #[derive(Clone, Debug, Default)]
 pub struct DashPattern {
+    /// Alternating dash-on / dash-off lengths, in user units. An empty
+    /// array means a solid stroke.
     pub array: Vec<f32>,
+    /// Phase offset from the path start, in user units.
     pub offset: f32,
 }
 
@@ -692,8 +772,12 @@ impl DashPattern {
 /// painting operators.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FillRule {
+    /// A point is inside when the winding number of the path around it
+    /// is non-zero. SVG `fill-rule="nonzero"` (the default) / PDF `f`.
     #[default]
     NonZero,
+    /// A point is inside when a ray from it crosses the path an odd
+    /// number of times. SVG `fill-rule="evenodd"` / PDF `f*`.
     EvenOdd,
 }
 
@@ -710,11 +794,17 @@ pub enum FillRule {
 /// argument order, so emitters can serialize fields directly.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform2D {
+    /// X-scale term: contribution of input `x` to output `x`.
     pub a: f32,
+    /// Y-skew term: contribution of input `x` to output `y`.
     pub b: f32,
+    /// X-skew term: contribution of input `y` to output `x`.
     pub c: f32,
+    /// Y-scale term: contribution of input `y` to output `y`.
     pub d: f32,
+    /// X translation, in user units.
     pub e: f32,
+    /// Y translation, in user units.
     pub f: f32,
 }
 
@@ -841,20 +931,29 @@ pub struct ImageRef {
     /// Embedded raster payload. Boxed so a `Node::Image` variant
     /// doesn't bloat every other [`Node`] case.
     pub frame: Box<crate::VideoFrame>,
+    /// Destination rectangle the image is scaled into, in the local
+    /// user space (before `transform`).
     pub bounds: Rect,
+    /// Additional transform applied to the placed image, on top of the
+    /// enclosing group's transform.
     pub transform: Transform2D,
 }
 
 /// Axis-aligned rectangle in user-space coordinates.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
+    /// Left edge.
     pub x: f32,
+    /// Top edge.
     pub y: f32,
+    /// Rectangle width, in user units.
     pub width: f32,
+    /// Rectangle height, in user units.
     pub height: f32,
 }
 
 impl Rect {
+    /// Build a rectangle from its top-left corner and size.
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self {
             x,

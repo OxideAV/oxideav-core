@@ -23,28 +23,38 @@
 
 use thiserror::Error;
 
+/// Convenience alias: `std::result::Result` pinned to [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The error type shared by every oxideav crate. See the
+/// [module docs](self) for which variant to pick.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// An underlying transport / filesystem operation failed.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Valid input exercising a feature this implementation lacks.
     #[error("unsupported: {0}")]
     Unsupported(String),
 
+    /// The input violates its format's rules; not retryable.
     #[error("invalid data: {0}")]
     InvalidData(String),
 
+    /// Logical end of stream (clean between packets; short otherwise).
     #[error("end of stream")]
     Eof,
 
+    /// Push-parser starvation: feed more bytes and call again.
     #[error("need more data")]
     NeedMore,
 
+    /// No registered container format matched the probe subject.
     #[error("format not found: {0}")]
     FormatNotFound(String),
 
+    /// No registered codec matched the requested name or tag.
     #[error("codec not found: {0}")]
     CodecNotFound(String),
 
@@ -57,19 +67,24 @@ pub enum Error {
     #[error("resource exhausted: {0}")]
     ResourceExhausted(String),
 
+    /// Anything that doesn't fit the other variants; the message
+    /// carries the whole story.
     #[error("{0}")]
     Other(String),
 }
 
 impl Error {
+    /// Construct an [`Error::Unsupported`] with the given message.
     pub fn unsupported(msg: impl Into<String>) -> Self {
         Self::Unsupported(msg.into())
     }
 
+    /// Construct an [`Error::InvalidData`] with the given message.
     pub fn invalid(msg: impl Into<String>) -> Self {
         Self::InvalidData(msg.into())
     }
 
+    /// Construct an [`Error::Other`] with the given message.
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())
     }
