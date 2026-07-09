@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Rational` is now total on every input — no debug-build panic, no
+  release-build wrap, even with `i64::MIN` terms or zero denominators.
+  Four latent overflow bugs fixed: `reduced()` overflowed negating an
+  `i64::MIN` numerator (and a `u64→i64` gcd cast could go negative,
+  silently skipping reduction of `i64::MIN / i64::MIN`); `Neg`
+  overflowed on an `i64::MIN` numerator (the sign now moves to the
+  denominator, denoting the same value); `abs()` / `signum()` /
+  `cmp_value()` sign normalization overflowed on `i64::MIN` terms (now
+  `i128`-wide); and the arithmetic operators narrowed the reduced
+  `i128` result with a plain `as i64`, wrapping out-of-range results —
+  they now return the closest representable approximation (saturated
+  numerator for magnitude overflow, rescaled `i64::MAX` denominator
+  for precision overflow).
+- `rescale` no longer wraps: the rounded 128-bit result used to be
+  narrowed `as i64` (silently corrupting e.g. `i64::MAX` seconds →
+  milliseconds); it now saturates to `i64::MAX` / `i64::MIN` by sign.
+  The 128-bit product itself is checked too (three near-`i64::MAX`
+  terms could overflow `i128` and panic in debug builds), and
+  negative-denominator conversions now round ties away from zero like
+  every other sign combination (previously toward zero).
+- `registry::container` docs described `ProbeData` / `ProbeScore` in
+  terms of the codec-level `ProbeFn`; they now correctly reference
+  `ContainerProbeFn`. All eleven broken/ambiguous intra-doc links
+  fixed; `cargo doc` is clean under `RUSTDOCFLAGS="-D warnings"`.
+
+### Added
+
+- `Rational::checked_add` / `checked_sub` / `checked_mul` /
+  `checked_div` — exact reduced results, `None` exactly where the
+  operators would approximate. The overflow policy is documented on
+  the type.
+- `Rounding` enum (`NearestAway` default / `Floor` / `Ceil` /
+  `TowardZero`, `#[non_exhaustive]`) with `rescale_rnd(value, from,
+  to, rounding)`, `TimeBase::rescale_rnd`, and `Timestamp::rescale_rnd`
+  — `Floor` is the DTS-safe choice, `Ceil` the end-stamp choice.
+- `rescale_checked(value, from, to) -> Option<i64>`,
+  `TimeBase::rescale_checked`, and `Timestamp::checked_rescale` —
+  `None` on an undefined conversion factor or out-of-range result,
+  for callers that must not accept a defaulted/saturated stamp.
+  Root re-exports: `rescale`, `rescale_rnd`, `rescale_checked`,
+  `Rounding`.
+- LSB bit-I/O surface parity with the MSB pair: `BitReaderLsb` gains
+  `with_position`, `byte_position`, `bits_remaining`, `align_to_byte`,
+  `peek_u32`, `skip`/`consume`, `read_u1`, `read_bytes`;
+  `BitWriterLsb` gains `byte_len`, `is_byte_aligned`, `write_bits`,
+  `write_i32`, `write_byte`, `write_bytes`, `bytes`/`buffer`,
+  `into_bytes`.
+- `Error` helpers: `format_not_found` / `codec_not_found`
+  constructors and `is_eof` / `is_need_more` / `is_starved` /
+  `is_resource_exhausted` predicates, plus a caller-action-oriented
+  variant taxonomy in the module docs.
+- Property-test harness (`tests/props.rs`): 12 deterministic
+  fixed-seed suites (~200k edge-biased cases) checking `Rational`
+  arithmetic and `rescale` against independent `i128` oracles,
+  rounding-mode bracketing, monotonicity-through-saturation, and
+  bit-I/O roundtrip/position invariants.
+- Criterion bench harness (`benches/primitives.rs`) covering the
+  bit-I/O hot paths, the rescale kernel, and `Rational` arithmetic,
+  with recorded baselines.
+- Crate-wide documentation completeness: every public item now has a
+  rustdoc comment and the crate root enforces
+  `#![warn(missing_docs)]` (deny via CI's clippy gate).
+
 ## [0.1.29](https://github.com/OxideAV/oxideav-core/compare/v0.1.28...v0.1.29) - 2026-06-09
 
 ### Other

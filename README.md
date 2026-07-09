@@ -24,13 +24,25 @@ pure-Rust media framework:
   magic-numbers; `TimeBase::from_rate(u32)` constructs the inverse-of-rate
   form, and `ticks_of(seconds: f64)` is the overflow-clamped inverse of
   the existing `seconds_of(ticks)`. `Timestamp::from_seconds` /
-  `checked_add_ticks` / `checked_sub_ticks` / `checked_diff` cover
-  per-stream timestamp arithmetic (including cross-base differences for
-  remux pipelines). `Rational` supports exact `+ - * /` and unary `-`
-  (results reduced via `i128` intermediates), plus `cmp_value` /
-  `equals_value` for value comparison (`30000/1001` vs `30/1`) that
-  doesn't disturb the structural `Eq`/`Hash` callers rely on to
-  preserve the on-wire fraction.
+  `checked_add_ticks` / `checked_sub_ticks` / `checked_diff` /
+  `checked_rescale` cover per-stream timestamp arithmetic (including
+  cross-base differences for remux pipelines).
+
+  The whole numeric core is **total — no panic, no silent wrap, even on
+  `i64::MIN` terms or zero denominators**. `rescale` computes in 128-bit
+  sign+magnitude space, rounds half-away-from-zero, and *saturates* at
+  the `i64` boundaries; `rescale_checked` returns `None` instead
+  wherever `rescale` would saturate or default; `rescale_rnd` takes an
+  explicit `Rounding` mode (`NearestAway` / `Floor` for DTS-safe stamps
+  / `Ceil` / `TowardZero`). `Rational` supports `+ - * /` and unary `-`
+  (exact via `i128` intermediates, reduced, closest-representable
+  approximation when even the reduced result exceeds `i64`),
+  `checked_add/sub/mul/div` that report `None` exactly where the
+  operators approximate, plus `cmp_value` / `equals_value` for value
+  comparison (`30000/1001` vs `30/1`) that doesn't disturb the
+  structural `Eq`/`Hash` callers rely on to preserve the on-wire
+  fraction. Property-tested against independent `i128` oracles (~200k
+  edge-biased cases in `tests/props.rs`).
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
   (40+ pixel variants including 8/10/12-bit YUV, 10/12/14-bit planar
   GBR(A), packed RGB/RGBA, NV12/NV21, all common sample layouts).
@@ -52,14 +64,28 @@ pure-Rust media framework:
   container.
 * **`bits`** — shared MSB-first / LSB-first `BitReader` / `BitWriter`
   plus unary helpers. Used by the FLAC, AAC, H.264, HEVC, Vorbis and a
-  dozen other codecs in the workspace.
+  dozen other codecs in the workspace. The LSB pair (the Vorbis §2.1.4
+  layout) exposes the full MSB surface — `peek_u32` (Huffman lookup
+  windows), `skip` / `consume`, `align_to_byte`, `read_bytes`,
+  positional bookkeeping, `write_bytes` and the alias set. Criterion
+  baselines live in `benches/primitives.rs` (~1.3 GiB/s read,
+  ~430 MiB/s write on a mixed-width field schedule).
 * **`SourceRegistry`** — URI scheme dispatch for sources. Drivers
   register as one of three shapes — `BytesSource` (file / http), 
   `PacketSource` (transport-layer protocols that pre-demux), or
   `FrameSource` (synthetic generators that emit decoded frames) —
   and `open(uri)` returns a `SourceOutput` enum the pipeline executor
   branches on.
-* **`Error`** — one unified error enum used across the ecosystem.
+* **`Error`** — one unified error enum used across the ecosystem, with
+  a documented caller-action taxonomy (verdict vs starvation vs
+  backpressure), constructors for every string variant, and
+  `is_eof` / `is_need_more` / `is_starved` / `is_resource_exhausted`
+  predicates (the enum can't be `PartialEq` — `Io` wraps
+  `std::io::Error`).
+
+Every public item is documented (`#![warn(missing_docs)]` is enforced
+at the crate root, promoted to deny by CI's clippy gate) and
+`cargo doc` is warning-clean under docs.rs-strict settings.
 
 Zero C dependencies. Zero FFI. Zero `*-sys` crates.
 
