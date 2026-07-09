@@ -78,8 +78,9 @@ pub enum ChannelPosition {
 /// The `Stereo` variant covers both regular two-channel stereo and the
 /// AC-3 / AC-4 matrix-encoded downmix carriers `Lo/Ro` ("two of",
 /// downmix-compatible) and `Lt/Rt` ("matrix-encoded for Pro Logic
-/// extraction"); the dedicated [`LoRo`] / [`LtRt`] variants surface the
-/// distinction explicitly when a downstream filter or muxer needs it.
+/// extraction"); the dedicated [`LoRo`](ChannelLayout::LoRo) /
+/// [`LtRt`](ChannelLayout::LtRt) variants surface the distinction
+/// explicitly when a downstream filter or muxer needs it.
 ///
 /// `DiscreteN(n)` is the catch-all for "we know there are `n` channels
 /// but no recognised layout" — used when a codec produces an unusual

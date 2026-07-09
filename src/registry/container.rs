@@ -114,7 +114,7 @@ pub type OpenDemuxerFn =
 pub type OpenMuxerFn =
     fn(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>>;
 
-/// Information passed to a content-based [`ProbeFn`].
+/// Information passed to a content-based [`ContainerProbeFn`].
 ///
 /// `buf` holds the first few KB of the input — enough to recognise the
 /// magic bytes of any container we know about. `ext` carries the file
@@ -128,7 +128,7 @@ pub struct ProbeData<'a> {
     pub ext: Option<&'a str>,
 }
 
-/// Confidence score returned by a [`ProbeFn`]. `0` means no match.
+/// Confidence score returned by a [`ContainerProbeFn`]. `0` means no match.
 /// Higher means more certain. Conventional values:
 ///
 /// * `100` – unambiguous magic bytes at a known offset

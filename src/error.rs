@@ -23,7 +23,7 @@
 
 use thiserror::Error;
 
-/// Convenience alias: `std::result::Result` pinned to [`Error`].
+/// Convenience alias: `std::result::Result` pinned to [`enum@Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// The error type shared by every oxideav crate. See the

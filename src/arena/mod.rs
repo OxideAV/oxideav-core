@@ -4,7 +4,7 @@
 //! described in [`crate::limits`]. It provides three types:
 //!
 //! - [`ArenaPool`] — a pool of reusable raw byte buffers (allocated
-//!   via [`std::alloc::alloc`] with a fixed [`MAX_ALIGN`] alignment so
+//!   via [`std::alloc::alloc`] with a fixed `MAX_ALIGN` alignment so
 //!   each buffer's base pointer is suitable for any `T` whose
 //!   alignment is `<= MAX_ALIGN`) that a decoder leases from. Pool
 //!   size and per-buffer capacity are fixed at construction; together
@@ -62,10 +62,10 @@
 //! 1. **Base-pointer alignment.** A `Box<[u8]>` is byte-aligned only,
 //!    so even an empty `&mut [u32]` carved out of one would have an
 //!    unaligned pointer (UB). Each pool buffer is now allocated
-//!    directly via [`std::alloc::alloc`] with [`MAX_ALIGN`] (= 64 B,
+//!    directly via [`std::alloc::alloc`] with `MAX_ALIGN` (= 64 B,
 //!    enough for AVX-512), so the base pointer is suitable for any
 //!    type the arena will hand out. `alloc::<T>` rejects types whose
-//!    alignment exceeds [`MAX_ALIGN`] at compile time via a
+//!    alignment exceeds `MAX_ALIGN` at compile time via a
 //!    `const`-evaluated assertion.
 //!
 //! 2. **Invalid bit patterns.** Pool buffers are zero-filled, but
@@ -113,7 +113,7 @@ pub(crate) const MAX_ALIGN: usize = 64;
 ///
 /// `#[repr(align(N))]` requires a literal, so the `const_assert` below
 /// (a const-eval'd `assert!`) catches the day someone bumps
-/// [`MAX_ALIGN`] without updating the literal here.
+/// `MAX_ALIGN` without updating the literal here.
 #[repr(align(64))]
 struct AlignedSentinel([u8; 0]);
 
@@ -126,7 +126,7 @@ const _: () = assert!(
 static EMPTY_SENTINEL: AlignedSentinel = AlignedSentinel([]);
 
 /// Layout used to allocate (and deallocate) pool buffers. `cap` is the
-/// per-arena byte capacity; alignment is fixed at [`MAX_ALIGN`].
+/// per-arena byte capacity; alignment is fixed at `MAX_ALIGN`.
 ///
 /// Returns `None` for `cap == 0` — `Layout::from_size_align` rejects
 /// zero-sized layouts and we can't pass a zero-sized layout to
@@ -146,8 +146,8 @@ pub(crate) fn buffer_layout(cap: usize) -> Option<Layout> {
 /// [`crate::arena::sync::ArenaPool`].
 pub(crate) struct Buffer {
     /// Base pointer. For `cap > 0` this points at a live allocation
-    /// of `cap` bytes aligned to [`MAX_ALIGN`]. For `cap == 0` this is
-    /// a [`MAX_ALIGN`]-aligned dangling pointer (no backing storage).
+    /// of `cap` bytes aligned to `MAX_ALIGN`. For `cap == 0` this is
+    /// a `MAX_ALIGN`-aligned dangling pointer (no backing storage).
     pub(crate) ptr: NonNull<u8>,
     /// Capacity of the allocation in bytes (also the layout `size`).
     pub(crate) cap: usize,
@@ -160,7 +160,7 @@ unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
 impl Buffer {
-    /// Allocate a buffer of `cap` bytes aligned to [`MAX_ALIGN`],
+    /// Allocate a buffer of `cap` bytes aligned to `MAX_ALIGN`,
     /// zero-filled. For `cap == 0` returns a dangling-but-aligned
     /// sentinel (matching `NonNull::dangling()` semantics for an
     /// arbitrary-alignment pointer) without touching the global
@@ -363,7 +363,7 @@ pub struct Arena {
     /// "whole-buffer retag invalidates previously returned slices"
     /// problem.
     buffer: Cell<Option<Buffer>>,
-    /// Cached base pointer of `buffer` (a [`MAX_ALIGN`]-aligned
+    /// Cached base pointer of `buffer` (a `MAX_ALIGN`-aligned
     /// allocation owned by `buffer`). Stable for the lifetime of the
     /// arena: `Buffer` does not move its allocation, and we only take
     /// `buffer` out of the cell during `Drop` after no allocator
@@ -433,7 +433,7 @@ impl Arena {
     ///   on a forbidden-bit-pattern invariant).
     /// - `align_of::<T>() <= MAX_ALIGN` — checked at compile time via
     ///   a `const` assertion. The pool buffer's base pointer is
-    ///   aligned to [`MAX_ALIGN`] (= 64 bytes); per-`T` alignment is
+    ///   aligned to `MAX_ALIGN` (= 64 bytes); per-`T` alignment is
     ///   then a relative-offset adjustment of the bump cursor.
     /// - The arena does not run destructors on allocated values, so
     ///   `T` should not have meaningful `Drop` glue. `Zeroable` is

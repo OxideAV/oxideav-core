@@ -2,8 +2,8 @@
 //!
 //! A [`StreamFilter`] is a node in the pipeline that consumes N input streams
 //! and produces M output streams, where input and output media kinds may
-//! differ. This generalises the single-kind [`AudioFilter`] /
-//! [`ImageFilter`] traits and is the substrate used by
+//! differ. This generalises the single-kind `AudioFilter` /
+//! `ImageFilter` traits and is the substrate used by
 //! `oxideav-pipeline`'s filter registry.
 //!
 //! # Ports

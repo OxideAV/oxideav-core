@@ -203,7 +203,7 @@ pub struct Arena {
     /// when two threads called `alloc` concurrently while a third
     /// held a previously-returned `&mut [T]`.
     buffer: Mutex<Option<Buffer>>,
-    /// Cached base pointer of `buffer` (a [`MAX_ALIGN`]-aligned
+    /// Cached base pointer of `buffer` (a `MAX_ALIGN`-aligned
     /// allocation owned by `buffer`). Stable for the lifetime of the
     /// arena: `Buffer` does not move its allocation, and we only take
     /// `buffer` out of the mutex during `Drop` after no allocator
@@ -289,7 +289,7 @@ impl Arena {
     ///   niche-optimised enums.
     /// - `align_of::<T>() <= MAX_ALIGN` — checked at compile time via
     ///   a `const` assertion. The pool buffer's base pointer is
-    ///   aligned to [`MAX_ALIGN`] (= 64 bytes); per-`T` alignment is
+    ///   aligned to `MAX_ALIGN` (= 64 bytes); per-`T` alignment is
     ///   then a relative-offset adjustment of the bump cursor.
     /// - The arena does not run destructors on allocated values, so
     ///   `T` should not have meaningful `Drop` glue.

@@ -59,7 +59,8 @@ impl TimeBase {
     }
 
     /// Convert a fractional-seconds count to the nearest tick count in
-    /// this time base. The inverse of [`seconds_of`]: `seconds_of` goes
+    /// this time base. The inverse of [`seconds_of`](Self::seconds_of):
+    /// `seconds_of` goes
     /// `ticks → seconds`; `ticks_of` goes `seconds → ticks`. Useful
     /// for muxers and encoders that have a target wall-clock duration
     /// and need to land it on the stream's time base without hand-rolling
