@@ -93,8 +93,24 @@ impl TimeBase {
     }
 
     /// Rescale a timestamp from this time base to another.
+    ///
+    /// Saturates at the `i64` range boundaries and returns `0` on an
+    /// undefined conversion (zero term in the factor) — see [`rescale`].
     pub fn rescale(&self, ts: i64, target: TimeBase) -> i64 {
         rescale(ts, self.0, target.0)
+    }
+
+    /// Rescale a timestamp from this time base to another with an
+    /// explicit [`Rounding`] mode. See [`rescale_rnd`].
+    pub fn rescale_rnd(&self, ts: i64, target: TimeBase, rounding: Rounding) -> i64 {
+        rescale_rnd(ts, self.0, target.0, rounding)
+    }
+
+    /// Rescale a timestamp from this time base to another, reporting
+    /// `None` instead of saturating or defaulting — see
+    /// [`rescale_checked`].
+    pub fn rescale_checked(&self, ts: i64, target: TimeBase) -> Option<i64> {
+        rescale_checked(ts, self.0, target.0)
     }
 }
 
@@ -167,6 +183,29 @@ impl Timestamp {
         }
     }
 
+    /// Rescale onto `target` with an explicit [`Rounding`] mode. Muxers
+    /// that must never stamp a DTS later than the true instant use
+    /// [`Rounding::Floor`]; [`Rounding::NearestAway`] reproduces
+    /// [`rescale`](Self::rescale).
+    pub fn rescale_rnd(&self, target: TimeBase, rounding: Rounding) -> Self {
+        Self {
+            value: self.base.rescale_rnd(self.value, target, rounding),
+            base: target,
+        }
+    }
+
+    /// Rescale onto `target`, returning `None` when the conversion is
+    /// undefined (zero term in the factor) or the result doesn't fit
+    /// `i64` — instead of the defaulting/saturating [`rescale`](Self::rescale).
+    pub fn checked_rescale(&self, target: TimeBase) -> Option<Self> {
+        self.base
+            .rescale_checked(self.value, target)
+            .map(|value| Self {
+                value,
+                base: target,
+            })
+    }
+
     /// Advance the timestamp by `ticks` units in its own base. Returns
     /// `None` on `i64` overflow rather than wrapping silently — muxers
     /// that compute a packet-end timestamp at the edge of the
@@ -201,26 +240,147 @@ impl Timestamp {
     }
 }
 
-/// Rescale a value from one rational time base to another using 128-bit
-/// intermediate arithmetic to avoid overflow. Rounding is half-away-from-zero:
-/// a tie rounds toward the larger magnitude (e.g. `+1.5 → +2`, `-1.5 → -2`),
-/// which the sign-aware `± half` adjustment below implements.
-pub fn rescale(value: i64, from: Rational, to: Rational) -> i64 {
+/// How a rescale operation rounds a result that falls between two
+/// integer ticks of the target base.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Rounding {
+    /// Round to the nearest tick; a tie (exactly halfway) rounds away
+    /// from zero (`+1.5 → +2`, `-1.5 → -2`). The default, and the mode
+    /// the plain [`rescale`] uses.
+    #[default]
+    NearestAway,
+    /// Round toward negative infinity. The right choice for DTS-like
+    /// stamps that must never land *after* the true instant.
+    Floor,
+    /// Round toward positive infinity. The mirror of [`Rounding::Floor`]
+    /// for end-of-range stamps that must never land *before* the true
+    /// instant.
+    Ceil,
+    /// Round toward zero (truncate the fractional part).
+    TowardZero,
+}
+
+/// Divide `|prod|` by `den` with the given rounding mode, in unsigned
+/// magnitude space so no intermediate can overflow (`p ≤ 2^127`,
+/// `d ≤ 2^126`, and every adjustment stays below `2^128`). `neg` is the
+/// sign of the true quotient; sign-dependent modes (floor / ceil) use
+/// it to pick the right direction.
+fn div_round_abs(p: u128, d: u128, neg: bool, rounding: Rounding) -> u128 {
+    let q = p / d;
+    let r = p % d;
+    // Whether the magnitude rounds up to q+1. Remainder-based so no
+    // intermediate exceeds u128 (`r < d ≤ 2^126`, so `r * 2 < 2^127`).
+    let bump = match rounding {
+        // Ties (r*2 == d) round the magnitude up = away from zero.
+        Rounding::NearestAway => r * 2 >= d,
+        // Floor rounds a negative quotient's magnitude up, a positive
+        // one down; Ceil is the mirror.
+        Rounding::Floor => neg && r != 0,
+        Rounding::Ceil => !neg && r != 0,
+        Rounding::TowardZero => false,
+    };
+    if bump {
+        // q + 1 can only wrap when q == u128::MAX (p = 2^128-1, d = 1);
+        // the saturated value narrows to the same saturated i64 anyway.
+        q.saturating_add(1)
+    } else {
+        q
+    }
+}
+
+/// Narrow a sign+magnitude quotient to `i64`, saturating out-of-range
+/// magnitudes.
+fn sat_narrow(neg: bool, q_abs: u128) -> i64 {
+    if neg {
+        if q_abs >= 1u128 << 63 {
+            i64::MIN
+        } else {
+            -(q_abs as i64)
+        }
+    } else if q_abs > i64::MAX as u128 {
+        i64::MAX
+    } else {
+        q_abs as i64
+    }
+}
+
+/// Narrow a sign+magnitude quotient to `i64`, reporting `None` for
+/// out-of-range magnitudes.
+fn checked_narrow(neg: bool, q_abs: u128) -> Option<i64> {
+    if neg {
+        if q_abs > 1u128 << 63 {
+            None
+        } else {
+            Some((q_abs as i128).wrapping_neg() as i64)
+        }
+    } else if q_abs > i64::MAX as u128 {
+        None
+    } else {
+        Some(q_abs as i64)
+    }
+}
+
+/// Split the rescale factor into `(numerator, positive denominator)`,
+/// folding the denominator's sign onto the numerator. `None` when the
+/// denominator is zero (undefined conversion).
+fn rescale_factor(from: Rational, to: Rational) -> Option<(i128, u128)> {
     // value * (from.num/from.den) / (to.num/to.den)
     //   = value * from.num * to.den / (from.den * to.num)
-    let num = from.num as i128 * to.den as i128;
+    let mut num = from.num as i128 * to.den as i128;
     let den = from.den as i128 * to.num as i128;
     if den == 0 {
-        return 0;
+        return None;
     }
-    let prod = value as i128 * num;
-    let half = den.abs() / 2;
-    let rounded = if (prod >= 0) == (den > 0) {
-        (prod + half) / den
-    } else {
-        (prod - half) / den
+    if den < 0 {
+        // |num| ≤ 2^126, so the negation cannot overflow.
+        num = -num;
+    }
+    Some((num, den.unsigned_abs()))
+}
+
+/// Rescale a value from one rational time base to another using 128-bit
+/// intermediate arithmetic. Rounding is half-away-from-zero: a tie
+/// rounds toward the larger magnitude (e.g. `+1.5 → +2`, `-1.5 → -2`).
+///
+/// Total — never panics or wraps: an undefined conversion factor
+/// (`from.den * to.num == 0`) returns `0`, and a result outside `i64`
+/// range **saturates** to `i64::MAX` / `i64::MIN`. Use
+/// [`rescale_checked`] to detect those cases instead, or
+/// [`rescale_rnd`] for a different rounding mode.
+pub fn rescale(value: i64, from: Rational, to: Rational) -> i64 {
+    rescale_rnd(value, from, to, Rounding::NearestAway)
+}
+
+/// [`rescale`] with an explicit [`Rounding`] mode. Same totality
+/// guarantees: `0` on an undefined factor, saturation at the `i64`
+/// boundaries.
+pub fn rescale_rnd(value: i64, from: Rational, to: Rational, rounding: Rounding) -> i64 {
+    let Some((num, den)) = rescale_factor(from, to) else {
+        return 0;
     };
-    rounded as i64
+    let neg = (value < 0) != (num < 0);
+    // |value| ≤ 2^63 and |num| ≤ 2^126, so the magnitude product can
+    // reach ~2^189 with pathological bases; the true result is then far
+    // outside i64 either way, so saturate by sign.
+    let Some(p) = (value.unsigned_abs() as u128).checked_mul(num.unsigned_abs()) else {
+        return if neg { i64::MIN } else { i64::MAX };
+    };
+    sat_narrow(neg && p != 0, div_round_abs(p, den, neg, rounding))
+}
+
+/// [`rescale`] that reports failure instead of papering over it:
+/// returns `None` when the conversion factor is undefined
+/// (`from.den * to.num == 0`) or the rounded result doesn't fit `i64`.
+/// Rounding is half-away-from-zero, matching [`rescale`].
+pub fn rescale_checked(value: i64, from: Rational, to: Rational) -> Option<i64> {
+    let (num, den) = rescale_factor(from, to)?;
+    let neg = (value < 0) != (num < 0);
+    let p = (value.unsigned_abs() as u128).checked_mul(num.unsigned_abs())?;
+    checked_narrow(
+        neg && p != 0,
+        div_round_abs(p, den, neg, Rounding::NearestAway),
+    )
 }
 
 #[cfg(test)]
@@ -251,6 +411,132 @@ mod tests {
         // 3 ticks at 1/2 → 1.5 → 2.
         assert_eq!(rescale(3, Rational::new(1, 2), Rational::new(1, 1)), 2);
         assert_eq!(rescale(-3, Rational::new(1, 2), Rational::new(1, 1)), -2);
+    }
+
+    #[test]
+    fn rescale_saturates_instead_of_wrapping() {
+        // i64::MAX seconds → milliseconds overflows ×1000; the result
+        // used to wrap through `as i64`, now it saturates.
+        assert_eq!(
+            rescale(i64::MAX, Rational::new(1, 1), Rational::new(1, 1000)),
+            i64::MAX
+        );
+        assert_eq!(
+            rescale(i64::MIN, Rational::new(1, 1), Rational::new(1, 1000)),
+            i64::MIN
+        );
+        // Sign flip through a negative factor saturates the other way.
+        assert_eq!(
+            rescale(i64::MAX, Rational::new(-1, 1), Rational::new(1, 1000)),
+            i64::MIN
+        );
+        // Pathological factor whose 128-bit product overflows: still
+        // saturates by sign instead of panicking.
+        assert_eq!(
+            rescale(
+                i64::MAX,
+                Rational::new(i64::MAX, 1),
+                Rational::new(1, i64::MAX)
+            ),
+            i64::MAX
+        );
+        // Undefined factor (zero denominator term) stays 0.
+        assert_eq!(rescale(5, Rational::new(1, 0), Rational::new(1, 1)), 0);
+        assert_eq!(rescale(5, Rational::new(1, 1), Rational::new(0, 1)), 0);
+    }
+
+    #[test]
+    fn rescale_negative_denominator_ties_away_from_zero() {
+        // 3 ticks × (1/1) ÷ (-2/1) = -1.5 → -2 (half away from zero).
+        // The old sign handling rounded these ties toward zero.
+        assert_eq!(rescale(3, Rational::new(1, 1), Rational::new(-2, 1)), -2);
+        assert_eq!(rescale(-3, Rational::new(1, 1), Rational::new(-2, 1)), 2);
+        // Non-tie sanity through a negative source den.
+        assert_eq!(rescale(4, Rational::new(1, -2), Rational::new(1, 1)), -2);
+    }
+
+    #[test]
+    fn rescale_checked_reports_failure() {
+        // In-range conversions match the plain rescale.
+        assert_eq!(
+            rescale_checked(48000, Rational::new(1, 48000), Rational::new(1, 1000)),
+            Some(1000)
+        );
+        // Overflow → None (plain rescale saturates).
+        assert_eq!(
+            rescale_checked(i64::MAX, Rational::new(1, 1), Rational::new(1, 1000)),
+            None
+        );
+        // Undefined factor → None (plain rescale returns 0).
+        assert_eq!(
+            rescale_checked(5, Rational::new(1, 0), Rational::new(1, 1)),
+            None
+        );
+        assert_eq!(
+            rescale_checked(5, Rational::new(1, 1), Rational::new(0, 1)),
+            None
+        );
+        // Exactly i64::MIN is representable, one tick below is not.
+        assert_eq!(
+            rescale_checked(i64::MIN, Rational::new(1, 1), Rational::new(1, 1)),
+            Some(i64::MIN)
+        );
+        assert_eq!(
+            rescale_checked(i64::MIN, Rational::new(2, 1), Rational::new(1, 1)),
+            None
+        );
+    }
+
+    #[test]
+    fn rescale_rnd_modes() {
+        let from = Rational::new(1, 2);
+        let to = Rational::new(1, 1);
+        // 5 × (1/2) = 2.5
+        assert_eq!(rescale_rnd(5, from, to, Rounding::NearestAway), 3);
+        assert_eq!(rescale_rnd(5, from, to, Rounding::Floor), 2);
+        assert_eq!(rescale_rnd(5, from, to, Rounding::Ceil), 3);
+        assert_eq!(rescale_rnd(5, from, to, Rounding::TowardZero), 2);
+        // -5 × (1/2) = -2.5
+        assert_eq!(rescale_rnd(-5, from, to, Rounding::NearestAway), -3);
+        assert_eq!(rescale_rnd(-5, from, to, Rounding::Floor), -3);
+        assert_eq!(rescale_rnd(-5, from, to, Rounding::Ceil), -2);
+        assert_eq!(rescale_rnd(-5, from, to, Rounding::TowardZero), -2);
+        // Exact results are mode-independent.
+        for mode in [
+            Rounding::NearestAway,
+            Rounding::Floor,
+            Rounding::Ceil,
+            Rounding::TowardZero,
+        ] {
+            assert_eq!(rescale_rnd(4, from, to, mode), 2);
+        }
+        // Default mode is NearestAway (matches plain rescale).
+        assert_eq!(
+            rescale_rnd(5, from, to, Rounding::default()),
+            rescale(5, from, to)
+        );
+    }
+
+    #[test]
+    fn timestamp_rescale_rnd_and_checked() {
+        // 1 tick at 1/3 s → milliseconds = 333.33…
+        let ts = Timestamp::new(1, TimeBase::new(1, 3));
+        assert_eq!(ts.rescale_rnd(TimeBase::MILLIS, Rounding::Floor).value, 333);
+        assert_eq!(ts.rescale_rnd(TimeBase::MILLIS, Rounding::Ceil).value, 334);
+        assert_eq!(
+            ts.rescale_rnd(TimeBase::MILLIS, Rounding::Ceil).base,
+            TimeBase::MILLIS
+        );
+        // checked_rescale mirrors rescale in range…
+        let ok = Timestamp::new(48_000, TimeBase::AUDIO_48K)
+            .checked_rescale(TimeBase::MILLIS)
+            .unwrap();
+        assert_eq!(ok.value, 1000);
+        assert_eq!(ok.base, TimeBase::MILLIS);
+        // …and reports None past it.
+        let edge = Timestamp::new(i64::MAX, TimeBase::SECONDS);
+        assert!(edge.checked_rescale(TimeBase::MILLIS).is_none());
+        assert_eq!(edge.rescale(TimeBase::MILLIS).value, i64::MAX);
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub use stream::{
     ProbeFn, StreamInfo,
 };
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
-pub use time::{TimeBase, Timestamp};
+pub use time::{rescale, rescale_checked, rescale_rnd, Rounding, TimeBase, Timestamp};
 pub use vector::{
     DashPattern, FillRule, GradientStop, Group, ImageRef, LineCap, LineJoin, LinearGradient,
     MaskKind, Node, Paint, Path, PathCommand, PathNode, Point, RadialGradient, Rect, Rgba,
