@@ -440,12 +440,45 @@ impl<'a> BitReaderLsb<'a> {
         }
     }
 
+    /// Start reading at a specific byte offset (useful for parsers that
+    /// need to re-anchor into the middle of a buffer without copying).
+    /// Mirrors [`BitReader::with_position`].
+    pub fn with_position(data: &'a [u8], byte_pos: usize) -> Self {
+        let byte_pos = byte_pos.min(data.len());
+        Self {
+            data,
+            byte_pos,
+            acc: 0,
+            bits_in_acc: 0,
+        }
+    }
+
     pub fn bit_position(&self) -> u64 {
         self.byte_pos as u64 * 8 - self.bits_in_acc as u64
     }
 
+    /// Byte offset of the reader (floor of `bit_position / 8`).
+    pub fn byte_position(&self) -> usize {
+        (self.bit_position() / 8) as usize
+    }
+
+    /// Total remaining bits (buffered + unread from the slice).
+    pub fn bits_remaining(&self) -> u64 {
+        self.bits_in_acc as u64 + ((self.data.len() - self.byte_pos) as u64) * 8
+    }
+
     pub fn is_byte_aligned(&self) -> bool {
         self.bits_in_acc % 8 == 0
+    }
+
+    /// Skip remaining bits in the current byte, leaving the reader
+    /// byte-aligned. In the LSB layout the *low* bits of the partial
+    /// byte are the already-consumed ones, so this drops the buffered
+    /// low bits.
+    pub fn align_to_byte(&mut self) {
+        let drop = self.bits_in_acc % 8;
+        self.acc >>= drop;
+        self.bits_in_acc -= drop;
     }
 
     fn refill(&mut self) {
@@ -499,6 +532,69 @@ impl<'a> BitReaderLsb<'a> {
     pub fn read_bit(&mut self) -> Result<bool> {
         Ok(self.read_u32(1)? != 0)
     }
+
+    /// Read a single bit as `0` or `1` (some codec specs phrase flags
+    /// this way). Mirrors [`BitReader::read_u1`].
+    pub fn read_u1(&mut self) -> Result<u32> {
+        self.read_u32(1)
+    }
+
+    /// Peek `n` bits (0..=32) without consuming them. Mirrors
+    /// [`BitReader::peek_u32`] — the workhorse of table-driven Huffman
+    /// decoders (peek a fixed window, look up, then consume the code
+    /// length).
+    pub fn peek_u32(&mut self, n: u32) -> Result<u32> {
+        debug_assert!(n <= 32);
+        if n == 0 {
+            return Ok(0);
+        }
+        if self.bits_in_acc < n {
+            self.refill();
+            if self.bits_in_acc < n {
+                return Err(Error::Eof);
+            }
+        }
+        let mask = if n == 32 { u32::MAX } else { (1u32 << n) - 1 };
+        Ok((self.acc as u32) & mask)
+    }
+
+    /// Discard `n` bits.
+    pub fn skip(&mut self, n: u32) -> Result<()> {
+        let mut left = n;
+        while left > 32 {
+            self.read_u32(32)?;
+            left -= 32;
+        }
+        self.read_u32(left)?;
+        Ok(())
+    }
+
+    /// Alias for [`Self::skip`] — some spec wordings prefer "consume".
+    pub fn consume(&mut self, n: u32) -> Result<()> {
+        self.skip(n)
+    }
+
+    /// Read `n` bytes. Requires the reader to be byte-aligned. Mirrors
+    /// [`BitReader::read_bytes`].
+    pub fn read_bytes(&mut self, n: usize) -> Result<Vec<u8>> {
+        if !self.is_byte_aligned() {
+            return Err(Error::invalid(
+                "bitreader: read_bytes requires byte alignment",
+            ));
+        }
+        // Aligned, so `bits_in_acc` is a multiple of 8; each full byte
+        // in the accumulator is one unconsumed input byte whose
+        // `byte_pos` has already been advanced.
+        let start = self.byte_pos - (self.bits_in_acc as usize / 8);
+        if start + n > self.data.len() {
+            return Err(Error::Eof);
+        }
+        let out = self.data[start..start + n].to_vec();
+        self.acc = 0;
+        self.bits_in_acc = 0;
+        self.byte_pos = start + n;
+        Ok(out)
+    }
 }
 
 /// LSB-first bit writer — inverse of [`BitReaderLsb`].
@@ -530,6 +626,17 @@ impl BitWriterLsb {
         self.data.len() as u64 * 8 + self.bits_in_acc as u64
     }
 
+    /// Bytes of output produced so far (excluding any unflushed partial
+    /// byte).
+    pub fn byte_len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// True if the writer is currently on a byte boundary.
+    pub fn is_byte_aligned(&self) -> bool {
+        self.bits_in_acc % 8 == 0
+    }
+
     pub fn write_u32(&mut self, value: u32, n: u32) {
         debug_assert!(n <= 32, "BitWriterLsb::write_u32 supports up to 32 bits");
         if n == 0 {
@@ -556,14 +663,51 @@ impl BitWriterLsb {
         }
     }
 
+    /// Alias of [`Self::write_u32`] — mirrors [`BitWriter::write_bits`].
+    pub fn write_bits(&mut self, value: u32, n: u32) {
+        self.write_u32(value, n)
+    }
+
+    /// Append `n` bits interpreted as a signed integer. Only the low
+    /// `n` bits of the 2's-complement representation are written.
+    pub fn write_i32(&mut self, value: i32, n: u32) {
+        self.write_u32(value as u32, n);
+    }
+
     pub fn write_bit(&mut self, bit: bool) {
         self.write_u32(bit as u32, 1);
+    }
+
+    pub fn write_byte(&mut self, b: u8) {
+        self.write_u32(b as u32, 8);
+    }
+
+    /// Append a slice of bytes. Fast path when byte-aligned.
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
+        if self.is_byte_aligned() {
+            self.data.extend_from_slice(bytes);
+        } else {
+            for &b in bytes {
+                self.write_u32(b as u32, 8);
+            }
+        }
     }
 
     /// Pad to the next byte boundary with zero bits.
     pub fn align_to_byte(&mut self) {
         let pad = (8 - self.bits_in_acc % 8) % 8;
         self.write_u32(0, pad);
+    }
+
+    /// Borrow the bytes accumulated so far (excluding any unflushed
+    /// partial byte).
+    pub fn bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Alias of [`Self::bytes`] — mirrors [`BitWriter::buffer`].
+    pub fn buffer(&self) -> &[u8] {
+        &self.data
     }
 
     pub fn finish(mut self) -> Vec<u8> {
@@ -573,6 +717,11 @@ impl BitWriterLsb {
             self.bits_in_acc = 0;
         }
         self.data
+    }
+
+    /// Alias of [`Self::finish`] — mirrors [`BitWriter::into_bytes`].
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.finish()
     }
 }
 
@@ -747,5 +896,106 @@ mod tests {
         for &(v, n) in &writes {
             assert_eq!(r.read_u32(n).unwrap(), v);
         }
+    }
+
+    #[test]
+    fn lsb_peek_skip_consume() {
+        let mut r = BitReaderLsb::new(&[0xA5, 0x5A]);
+        // Low nibble of 0xA5 first in LSB order.
+        assert_eq!(r.peek_u32(4).unwrap(), 0x5);
+        // Peek does not consume.
+        assert_eq!(r.peek_u32(8).unwrap(), 0xA5);
+        r.skip(4).unwrap();
+        assert_eq!(r.read_u32(4).unwrap(), 0xA);
+        r.consume(4).unwrap();
+        assert_eq!(r.read_u32(4).unwrap(), 0x5);
+        // Past-end peek reports Eof.
+        assert!(r.peek_u32(8).is_err());
+    }
+
+    #[test]
+    fn lsb_alignment_and_positions() {
+        let mut r = BitReaderLsb::new(&[0xFF, 0x55, 0x33]);
+        assert_eq!(r.bits_remaining(), 24);
+        r.read_u32(3).unwrap();
+        assert!(!r.is_byte_aligned());
+        assert_eq!(r.bit_position(), 3);
+        assert_eq!(r.byte_position(), 0);
+        r.align_to_byte();
+        assert!(r.is_byte_aligned());
+        assert_eq!(r.bit_position(), 8);
+        assert_eq!(r.byte_position(), 1);
+        assert_eq!(r.bits_remaining(), 16);
+        assert_eq!(r.read_u32(8).unwrap(), 0x55);
+        // with_position anchors mid-buffer (and clamps past-end).
+        let mut r2 = BitReaderLsb::with_position(&[0xFF, 0x55, 0x33], 2);
+        assert_eq!(r2.read_u32(8).unwrap(), 0x33);
+        let r3 = BitReaderLsb::with_position(&[0xFF], 9);
+        assert_eq!(r3.bits_remaining(), 0);
+    }
+
+    #[test]
+    fn lsb_read_bytes_aligned() {
+        let mut r = BitReaderLsb::new(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let _ = r.read_u32(8).unwrap();
+        let got = r.read_bytes(2).unwrap();
+        assert_eq!(got, vec![0xBB, 0xCC]);
+        assert_eq!(r.read_u32(8).unwrap(), 0xDD);
+        // Unaligned read_bytes is a usage error.
+        let mut r = BitReaderLsb::new(&[0xAA, 0xBB]);
+        r.read_u32(3).unwrap();
+        assert!(r.read_bytes(1).is_err());
+        // Past-end read_bytes reports Eof.
+        let mut r = BitReaderLsb::new(&[0xAA]);
+        assert!(r.read_bytes(2).is_err());
+    }
+
+    #[test]
+    fn lsb_read_u1() {
+        // 0xA5 LSB-first = 1,0,1,0,0,1,0,1.
+        let mut r = BitReaderLsb::new(&[0xA5]);
+        let bits: Vec<u32> = (0..8).map(|_| r.read_u1().unwrap()).collect();
+        assert_eq!(bits, vec![1, 0, 1, 0, 0, 1, 0, 1]);
+    }
+
+    #[test]
+    fn lsb_writer_bytes_and_aliases() {
+        let mut w = BitWriterLsb::new();
+        assert!(w.is_byte_aligned());
+        w.write_bits(0x5, 4);
+        assert!(!w.is_byte_aligned());
+        assert_eq!(w.byte_len(), 0);
+        w.write_u32(0xA, 4);
+        assert_eq!(w.byte_len(), 1);
+        assert_eq!(w.bytes(), &[0xA5]);
+        assert_eq!(w.buffer(), &[0xA5]);
+        w.write_byte(0x7E);
+        w.write_bytes(&[0x11, 0x22]);
+        assert_eq!(w.into_bytes(), vec![0xA5, 0x7E, 0x11, 0x22]);
+    }
+
+    #[test]
+    fn lsb_writer_unaligned_write_bytes() {
+        let mut w = BitWriterLsb::new();
+        w.write_u32(0b101, 3);
+        w.write_bytes(&[0xFF, 0x00]);
+        let out = w.finish();
+        assert_eq!(out.len(), 3);
+        // Read back: 3 bits then the two bytes.
+        let mut r = BitReaderLsb::new(&out);
+        assert_eq!(r.read_u32(3).unwrap(), 0b101);
+        assert_eq!(r.read_u32(8).unwrap(), 0xFF);
+        assert_eq!(r.read_u32(8).unwrap(), 0x00);
+    }
+
+    #[test]
+    fn lsb_writer_signed() {
+        let mut w = BitWriterLsb::new();
+        w.write_i32(-1, 4);
+        w.write_i32(3, 4);
+        let bytes = w.finish();
+        let mut r = BitReaderLsb::new(&bytes);
+        assert_eq!(r.read_i32(4).unwrap(), -1);
+        assert_eq!(r.read_i32(4).unwrap(), 3);
     }
 }
