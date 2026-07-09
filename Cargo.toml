@@ -30,3 +30,15 @@ serde_json = "1"
 # (reading any other type, e.g. `NonZeroU8`, would be UB). bytemuck is
 # a zero-overhead, no-deps marker-trait crate.
 bytemuck = "1"
+
+[dev-dependencies]
+# Criterion drives the `primitives` bench harness (bit-I/O + rescale +
+# Rational hot paths) so optimisation rounds can A/B-test against a
+# stable, fixture-free baseline. Same 0.5 line the sibling crates'
+# bench harnesses pin. Run with:
+#     cargo bench -p oxideav-core --bench primitives
+criterion = "0.5"
+
+[[bench]]
+name = "primitives"
+harness = false
