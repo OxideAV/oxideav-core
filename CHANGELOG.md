@@ -47,6 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `Yuva420P` family. The alpha plane is always full resolution
   (never chroma-subsampled), appended after V as plane index 3.
   Closes the ProRes 4444 alpha-carriage gap.
+- `VideoFrame` palette side-channel — an additive, in-band way for
+  palette-indexed frames (`PixelFormat::Pal8`) to carry their color
+  table: `palette()` / `palette_rgb(index)` readers, `set_palette` /
+  `with_palette` / `take_palette` writers, and `image_planes()` /
+  `image_plane_count()` for palette-agnostic pixel iteration. The
+  table rides as a trailing `VideoPlane` with `stride == 0` and
+  non-empty `data` — a shape impossible for an image plane (whose
+  `data` is `stride × rows` long), so the sentinel is unambiguous and
+  frames without a palette are byte-for-byte unchanged. Entries are
+  packed 3-byte RGB. The generic `receive_arena_frame` conversion now
+  counts only image planes for its best-effort pixel-format label.
 - `Rational::checked_add` / `checked_sub` / `checked_mul` /
   `checked_div` — exact reduced results, `None` exactly where the
   operators would approximate. The overflow policy is documented on
