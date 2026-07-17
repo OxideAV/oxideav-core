@@ -584,6 +584,24 @@ pub enum PixelFormat {
     /// ordered G, B, R, A; each sample uses the low 14 bits of a 16-bit
     /// word.
     Gbrap14Le = 40,
+
+    // --- 16-bit YUV planar ---
+    //
+    // Full-width companions to the 10/12-bit planar YUV variants above:
+    // same three-plane layout and little-endian 16-bit words, but ALL 16
+    // bits of every word are significant (there are no zero top bits and
+    // no separate "valid bits" count — full-scale is 65535). Needed by
+    // wavelet codecs whose signal-range presets go to 16 bits per
+    // component (SMPTE VC-2 / Dirac video-format presets 7 and 8).
+    /// 16-bit YUV 4:2:0 planar, little-endian 16-bit storage. All 16
+    /// bits of each sample word are significant.
+    Yuv420P16Le = 41,
+    /// 16-bit YUV 4:2:2 planar, little-endian 16-bit storage. All 16
+    /// bits of each sample word are significant.
+    Yuv422P16Le = 42,
+    /// 16-bit YUV 4:4:4 planar, little-endian 16-bit storage. All 16
+    /// bits of each sample word are significant.
+    Yuv444P16Le = 43,
 }
 
 impl PixelFormat {
@@ -601,6 +619,9 @@ impl PixelFormat {
                 | Self::Yuv420P12Le
                 | Self::Yuv422P12Le
                 | Self::Yuv444P12Le
+                | Self::Yuv420P16Le
+                | Self::Yuv422P16Le
+                | Self::Yuv444P16Le
                 | Self::YuvJ420P
                 | Self::YuvJ422P
                 | Self::YuvJ444P
@@ -654,6 +675,9 @@ impl PixelFormat {
             | Self::Yuv420P12Le
             | Self::Yuv422P12Le
             | Self::Yuv444P12Le
+            | Self::Yuv420P16Le
+            | Self::Yuv422P16Le
+            | Self::Yuv444P16Le
             | Self::YuvJ420P
             | Self::YuvJ422P
             | Self::YuvJ444P
@@ -689,9 +713,9 @@ impl PixelFormat {
             Self::Yuv411P => 12,
             Self::Yuv422P | Self::YuvJ422P => 16,
             Self::Yuv444P | Self::YuvJ444P => 24,
-            Self::Yuv420P10Le | Self::Yuv420P12Le => 24,
-            Self::Yuv422P10Le | Self::Yuv422P12Le => 32,
-            Self::Yuv444P10Le | Self::Yuv444P12Le => 48,
+            Self::Yuv420P10Le | Self::Yuv420P12Le | Self::Yuv420P16Le => 24,
+            Self::Yuv422P10Le | Self::Yuv422P12Le | Self::Yuv422P16Le => 32,
+            Self::Yuv444P10Le | Self::Yuv444P12Le | Self::Yuv444P16Le => 48,
             Self::Yuva420P => 20,
             // Planar GBR(A) at 10/12/14 bits stored in 16-bit words: we
             // report the packed bits-per-pixel density (samples × bits)
@@ -759,6 +783,9 @@ mod tests {
         assert_eq!(PixelFormat::Gbrap12Le as u16, 38);
         assert_eq!(PixelFormat::Gbrp14Le as u16, 39);
         assert_eq!(PixelFormat::Gbrap14Le as u16, 40);
+        assert_eq!(PixelFormat::Yuv420P16Le as u16, 41);
+        assert_eq!(PixelFormat::Yuv422P16Le as u16, 42);
+        assert_eq!(PixelFormat::Yuv444P16Le as u16, 43);
     }
 
     #[test]
@@ -793,11 +820,27 @@ mod tests {
         assert_eq!(PixelFormat::Yuv422P12Le.plane_count(), 3);
         assert_eq!(PixelFormat::Yuv444P12Le.plane_count(), 3);
 
+        // 16-bit variants must follow the same shape.
+        for fmt in [
+            PixelFormat::Yuv420P16Le,
+            PixelFormat::Yuv422P16Le,
+            PixelFormat::Yuv444P16Le,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 3, "{fmt:?} must have 3 planes");
+        }
+
         // None of the high-bit YUV variants carry alpha or palette.
         assert!(!PixelFormat::Yuv422P12Le.has_alpha());
         assert!(!PixelFormat::Yuv444P12Le.has_alpha());
         assert!(!PixelFormat::Yuv422P12Le.is_palette());
         assert!(!PixelFormat::Yuv444P12Le.is_palette());
+        assert!(!PixelFormat::Yuv420P16Le.has_alpha());
+        assert!(!PixelFormat::Yuv422P16Le.has_alpha());
+        assert!(!PixelFormat::Yuv444P16Le.has_alpha());
+        assert!(!PixelFormat::Yuv420P16Le.is_palette());
+        assert!(!PixelFormat::Yuv422P16Le.is_palette());
+        assert!(!PixelFormat::Yuv444P16Le.is_palette());
     }
 
     #[test]
@@ -988,6 +1031,13 @@ mod tests {
         assert_eq!(PixelFormat::Yuv444P10Le.bits_per_pixel_approx(), 48);
         assert_eq!(PixelFormat::Yuv444P12Le.bits_per_pixel_approx(), 48);
         assert_eq!(PixelFormat::Yuv420P12Le.bits_per_pixel_approx(), 24);
+
+        // 16-bit: packed bits == storage bits (every bit of the 16-bit
+        // word is significant), so the estimator lands on the same
+        // numbers as the 10/12-bit siblings.
+        assert_eq!(PixelFormat::Yuv420P16Le.bits_per_pixel_approx(), 24);
+        assert_eq!(PixelFormat::Yuv422P16Le.bits_per_pixel_approx(), 32);
+        assert_eq!(PixelFormat::Yuv444P16Le.bits_per_pixel_approx(), 48);
     }
 
     #[test]

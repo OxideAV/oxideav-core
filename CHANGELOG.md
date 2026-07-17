@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `PixelFormat::Yuv420P16Le` / `Yuv422P16Le` / `Yuv444P16Le` — 16-bit
+  planar YUV at the three standard chroma samplings (discriminants
+  41–43). Same three-plane little-endian-16-bit-word layout as the
+  10/12-bit variants, but all 16 bits of every word are significant
+  (full-scale is 65535). Unblocks the SMPTE VC-2 / Dirac video-format
+  presets 7 and 8, whose signal range goes to 16 bits per component.
 - `Rational::checked_add` / `checked_sub` / `checked_mul` /
   `checked_div` — exact reduced results, `None` exactly where the
   operators would approximate. The overflow policy is documented on
