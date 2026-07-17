@@ -15,6 +15,10 @@ pure-Rust media framework:
   overflow-checked `pts + duration` for muxers that need a per-
   packet end timestamp.
 * **`Frame`** — one uncompressed audio / video / subtitle chunk.
+  `VideoFrame` can carry an in-band palette side-channel for
+  palette-indexed (`Pal8`) content: `palette()` / `set_palette` /
+  `take_palette` plus `image_planes()` for palette-agnostic plane
+  iteration.
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes.
 * **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
@@ -44,8 +48,9 @@ pure-Rust media framework:
   fraction. Property-tested against independent `i128` oracles (~200k
   edge-biased cases in `tests/props.rs`).
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
-  (40+ pixel variants including 8/10/12-bit YUV, 10/12/14-bit planar
-  GBR(A), packed RGB/RGBA, NV12/NV21, all common sample layouts).
+  (45+ pixel variants including 8/10/12/16-bit YUV, YUV+alpha at
+  4:2:0/4:2:2/4:4:4, 10/12/14-bit planar GBR(A), packed RGB/RGBA,
+  NV12/NV21, all common sample layouts).
 * **`AttachedPicture`** / **`PictureType`** — ID3v2 `APIC` taxonomy
   shared by ID3v2 / FLAC / MP4 / Vorbis cover-art carriage. `PictureType`
   round-trips byte-for-byte through `from_u8` ↔ `to_u8` over the spec-
