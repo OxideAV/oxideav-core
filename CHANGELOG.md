@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10/12-bit variants, but all 16 bits of every word are significant
   (full-scale is 65535). Unblocks the SMPTE VC-2 / Dirac video-format
   presets 7 and 8, whose signal range goes to 16 bits per component.
+- `PixelFormat::Yuva422P` / `Yuva444P` — 8-bit planar YUV + alpha at
+  4:2:2 and 4:4:4 chroma samplings (discriminants 44–45), completing
+  the `Yuva420P` family. The alpha plane is always full resolution
+  (never chroma-subsampled), appended after V as plane index 3.
+  Closes the ProRes 4444 alpha-carriage gap.
 - `Rational::checked_add` / `checked_sub` / `checked_mul` /
   `checked_div` — exact reduced results, `None` exactly where the
   operators would approximate. The overflow policy is documented on

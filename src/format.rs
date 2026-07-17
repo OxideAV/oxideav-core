@@ -602,6 +602,17 @@ pub enum PixelFormat {
     /// 16-bit YUV 4:4:4 planar, little-endian 16-bit storage. All 16
     /// bits of each sample word are significant.
     Yuv444P16Le = 43,
+
+    // --- 8-bit YUV + alpha at the remaining chroma samplings ---
+    //
+    // Companions to `Yuva420P`: the alpha plane is always full
+    // resolution (one 8-bit sample per pixel, never chroma-subsampled),
+    // appended after the V plane as plane index 3. Intermediate/mezzanine
+    // codecs carry alpha at 4:2:2 and 4:4:4 samplings.
+    /// Yuv422P with an additional full-resolution alpha plane.
+    Yuva422P = 44,
+    /// Yuv444P with an additional full-resolution alpha plane.
+    Yuva444P = 45,
 }
 
 impl PixelFormat {
@@ -628,6 +639,8 @@ impl PixelFormat {
                 | Self::Nv12
                 | Self::Nv21
                 | Self::Yuva420P
+                | Self::Yuva422P
+                | Self::Yuva444P
                 | Self::Gbrp10Le
                 | Self::Gbrap10Le
                 | Self::Gbrp12Le
@@ -653,6 +666,8 @@ impl PixelFormat {
                 | Self::Rgba64Le
                 | Self::Ya8
                 | Self::Yuva420P
+                | Self::Yuva422P
+                | Self::Yuva444P
                 | Self::Gbrap10Le
                 | Self::Gbrap12Le
                 | Self::Gbrap14Le
@@ -684,7 +699,12 @@ impl PixelFormat {
             | Self::Gbrp10Le
             | Self::Gbrp12Le
             | Self::Gbrp14Le => 3,
-            Self::Yuva420P | Self::Gbrap10Le | Self::Gbrap12Le | Self::Gbrap14Le => 4,
+            Self::Yuva420P
+            | Self::Yuva422P
+            | Self::Yuva444P
+            | Self::Gbrap10Le
+            | Self::Gbrap12Le
+            | Self::Gbrap14Le => 4,
             _ => 1,
         }
     }
@@ -717,6 +737,10 @@ impl PixelFormat {
             Self::Yuv422P10Le | Self::Yuv422P12Le | Self::Yuv422P16Le => 32,
             Self::Yuv444P10Le | Self::Yuv444P12Le | Self::Yuv444P16Le => 48,
             Self::Yuva420P => 20,
+            // 4:2:2 + full-res alpha: 8 (Y) + 4 (U) + 4 (V) + 8 (A).
+            Self::Yuva422P => 24,
+            // 4:4:4 + full-res alpha: four full-resolution 8-bit planes.
+            Self::Yuva444P => 32,
             // Planar GBR(A) at 10/12/14 bits stored in 16-bit words: we
             // report the packed bits-per-pixel density (samples × bits)
             // rather than the 16-bit storage cost, matching how the
@@ -786,6 +810,8 @@ mod tests {
         assert_eq!(PixelFormat::Yuv420P16Le as u16, 41);
         assert_eq!(PixelFormat::Yuv422P16Le as u16, 42);
         assert_eq!(PixelFormat::Yuv444P16Le as u16, 43);
+        assert_eq!(PixelFormat::Yuva422P as u16, 44);
+        assert_eq!(PixelFormat::Yuva444P as u16, 45);
     }
 
     #[test]
@@ -1038,6 +1064,40 @@ mod tests {
         assert_eq!(PixelFormat::Yuv420P16Le.bits_per_pixel_approx(), 24);
         assert_eq!(PixelFormat::Yuv422P16Le.bits_per_pixel_approx(), 32);
         assert_eq!(PixelFormat::Yuv444P16Le.bits_per_pixel_approx(), 48);
+    }
+
+    #[test]
+    fn yuva_planar_metadata() {
+        // All three alpha-carrying planar YUV samplings share one shape:
+        // planar, 4 planes (Y, U, V, full-resolution A), alpha set, not
+        // a palette format.
+        for fmt in [
+            PixelFormat::Yuva420P,
+            PixelFormat::Yuva422P,
+            PixelFormat::Yuva444P,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 4, "{fmt:?} must have 4 planes");
+            assert!(fmt.has_alpha(), "{fmt:?} must carry alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+        }
+
+        // Packed-bits estimator: the alpha plane adds a full 8 bits per
+        // pixel on top of the alpha-less sampling's density.
+        assert_eq!(
+            PixelFormat::Yuva420P.bits_per_pixel_approx(),
+            PixelFormat::Yuv420P.bits_per_pixel_approx() + 8
+        );
+        assert_eq!(
+            PixelFormat::Yuva422P.bits_per_pixel_approx(),
+            PixelFormat::Yuv422P.bits_per_pixel_approx() + 8
+        );
+        assert_eq!(
+            PixelFormat::Yuva444P.bits_per_pixel_approx(),
+            PixelFormat::Yuv444P.bits_per_pixel_approx() + 8
+        );
+        assert_eq!(PixelFormat::Yuva422P.bits_per_pixel_approx(), 24);
+        assert_eq!(PixelFormat::Yuva444P.bits_per_pixel_approx(), 32);
     }
 
     #[test]
