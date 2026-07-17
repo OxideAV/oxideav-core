@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30](https://github.com/OxideAV/oxideav-core/compare/v0.1.29...v0.1.30) - 2026-07-17
+
+### Other
+
+- reflect 16-bit YUV, Yuva 4:2:2/4:4:4, and the palette side-channel
+- add palette side-channel to VideoFrame
+- add alpha-carrying planar YUV at 4:2:2 and 4:4:4 (Yuva422P/Yuva444P)
+- add 16-bit planar YUV pixel formats (Yuv420P16Le/Yuv422P16Le/Yuv444P16Le)
+- reword a historical entry to describe the GBR plane layout on its own terms
+- README numeric-core/bits/error refresh + CHANGELOG for the r399 hardening round
+- fix all broken intra-doc links — docs.rs-strict (RUSTDOCFLAGS=-D warnings) now clean
+- crate-wide missing_docs sweep + #![warn(missing_docs)] lock-in
+- criterion harness for the hot primitives (bits / rescale / Rational)
+- taxonomy contract docs + constructors and classification predicates
+- LSB reader/writer surface parity with the MSB pair
+- property harness for Rational / rescale / bit-I/O foundations
+- total rescale core — saturate instead of wrap, checked + rounding-mode variants
+- total overflow-safe arithmetic — i64::MIN-safe reduce/neg/abs/cmp + checked_* ops + approximate-instead-of-wrap narrowing
+- add CI / crates.io / docs.rs / MIT-license badges
+
 ### Fixed
 
 - `Rational` is now total on every input — no debug-build panic, no
