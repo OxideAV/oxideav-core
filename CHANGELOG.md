@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.31](https://github.com/OxideAV/oxideav-core/compare/v0.1.30...v0.1.31) - 2026-07-19
+
+### Other
+
+- README + CHANGELOG: deep Yuva formats and the significant-bits side-channel
+- per-plane significant-bits side-channel on VideoFrame
+- add deep alpha-carrying planar YUV (Yuva 4:2:2/4:4:4 at 10/12/16-bit)
+
 ### Added
 
 - Deep alpha-carrying planar YUV pixel formats completing the Yuva
