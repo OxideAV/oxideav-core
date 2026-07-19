@@ -613,6 +613,44 @@ pub enum PixelFormat {
     Yuva422P = 44,
     /// Yuv444P with an additional full-resolution alpha plane.
     Yuva444P = 45,
+
+    // --- Deep YUV + alpha (10/12/16-bit words with full-resolution A) ---
+    //
+    // Alpha-carrying companions to the 10/12/16-bit planar YUV variants
+    // above, completing the Yuva family for mezzanine codecs that carry
+    // deep colour together with an alpha channel. Same conventions as
+    // the 8-bit `Yuva*` trio: 4 planes ordered Y, U, V, A with the
+    // alpha plane always at full resolution (one sample per pixel,
+    // never chroma-subsampled) as plane index 3. Every sample — alpha
+    // included — is stored as a little-endian 16-bit word; for the
+    // 10/12-bit variants each sample uses the low bits of the word with
+    // the top bits zero, and for the 16-bit variants all 16 bits of
+    // every word are significant (full-scale is 65535), matching
+    // `Yuv420P16Le`/`Yuv422P16Le`/`Yuv444P16Le`.
+    /// 10-bit YUV 4:2:2 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; each sample uses
+    /// the low 10 bits of a 16-bit word.
+    Yuva422P10Le = 46,
+    /// 12-bit YUV 4:2:2 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; each sample uses
+    /// the low 12 bits of a 16-bit word.
+    Yuva422P12Le = 47,
+    /// 10-bit YUV 4:4:4 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; each sample uses
+    /// the low 10 bits of a 16-bit word.
+    Yuva444P10Le = 48,
+    /// 12-bit YUV 4:4:4 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; each sample uses
+    /// the low 12 bits of a 16-bit word.
+    Yuva444P12Le = 49,
+    /// 16-bit YUV 4:2:2 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; all 16 bits of
+    /// each sample word are significant.
+    Yuva422P16Le = 50,
+    /// 16-bit YUV 4:4:4 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; all 16 bits of
+    /// each sample word are significant.
+    Yuva444P16Le = 51,
 }
 
 impl PixelFormat {
@@ -641,6 +679,12 @@ impl PixelFormat {
                 | Self::Yuva420P
                 | Self::Yuva422P
                 | Self::Yuva444P
+                | Self::Yuva422P10Le
+                | Self::Yuva422P12Le
+                | Self::Yuva444P10Le
+                | Self::Yuva444P12Le
+                | Self::Yuva422P16Le
+                | Self::Yuva444P16Le
                 | Self::Gbrp10Le
                 | Self::Gbrap10Le
                 | Self::Gbrp12Le
@@ -668,6 +712,12 @@ impl PixelFormat {
                 | Self::Yuva420P
                 | Self::Yuva422P
                 | Self::Yuva444P
+                | Self::Yuva422P10Le
+                | Self::Yuva422P12Le
+                | Self::Yuva444P10Le
+                | Self::Yuva444P12Le
+                | Self::Yuva422P16Le
+                | Self::Yuva444P16Le
                 | Self::Gbrap10Le
                 | Self::Gbrap12Le
                 | Self::Gbrap14Le
@@ -702,6 +752,12 @@ impl PixelFormat {
             Self::Yuva420P
             | Self::Yuva422P
             | Self::Yuva444P
+            | Self::Yuva422P10Le
+            | Self::Yuva422P12Le
+            | Self::Yuva444P10Le
+            | Self::Yuva444P12Le
+            | Self::Yuva422P16Le
+            | Self::Yuva444P16Le
             | Self::Gbrap10Le
             | Self::Gbrap12Le
             | Self::Gbrap14Le => 4,
@@ -741,6 +797,12 @@ impl PixelFormat {
             Self::Yuva422P => 24,
             // 4:4:4 + full-res alpha: four full-resolution 8-bit planes.
             Self::Yuva444P => 32,
+            // Deep 4:2:2 + full-res alpha in 16-bit words: the estimator
+            // reports the 16-bit-word cost like the alpha-less deep YUV
+            // arms above — 3 sample words per pixel (Y + U/2 + V/2 + A).
+            Self::Yuva422P10Le | Self::Yuva422P12Le | Self::Yuva422P16Le => 48,
+            // Deep 4:4:4 + full-res alpha: 4 sample words per pixel.
+            Self::Yuva444P10Le | Self::Yuva444P12Le | Self::Yuva444P16Le => 64,
             // Planar GBR(A) at 10/12/14 bits stored in 16-bit words: we
             // report the packed bits-per-pixel density (samples × bits)
             // rather than the 16-bit storage cost, matching how the
@@ -812,6 +874,12 @@ mod tests {
         assert_eq!(PixelFormat::Yuv444P16Le as u16, 43);
         assert_eq!(PixelFormat::Yuva422P as u16, 44);
         assert_eq!(PixelFormat::Yuva444P as u16, 45);
+        assert_eq!(PixelFormat::Yuva422P10Le as u16, 46);
+        assert_eq!(PixelFormat::Yuva422P12Le as u16, 47);
+        assert_eq!(PixelFormat::Yuva444P10Le as u16, 48);
+        assert_eq!(PixelFormat::Yuva444P12Le as u16, 49);
+        assert_eq!(PixelFormat::Yuva422P16Le as u16, 50);
+        assert_eq!(PixelFormat::Yuva444P16Le as u16, 51);
     }
 
     #[test]
@@ -1098,6 +1166,62 @@ mod tests {
         );
         assert_eq!(PixelFormat::Yuva422P.bits_per_pixel_approx(), 24);
         assert_eq!(PixelFormat::Yuva444P.bits_per_pixel_approx(), 32);
+    }
+
+    #[test]
+    fn deep_yuva_planar_metadata() {
+        // All six deep alpha-carrying variants share one shape: planar,
+        // 4 planes (Y, U, V, full-resolution A), alpha set, no palette.
+        for fmt in [
+            PixelFormat::Yuva422P10Le,
+            PixelFormat::Yuva422P12Le,
+            PixelFormat::Yuva444P10Le,
+            PixelFormat::Yuva444P12Le,
+            PixelFormat::Yuva422P16Le,
+            PixelFormat::Yuva444P16Le,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 4, "{fmt:?} must have 4 planes");
+            assert!(fmt.has_alpha(), "{fmt:?} must carry alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+        }
+    }
+
+    #[test]
+    fn deep_yuva_bits_per_pixel_approx() {
+        // Estimator reports 16-bit-word storage cost, matching the
+        // alpha-less deep YUV trio: the full-resolution alpha word adds
+        // 16 on top of the alpha-less sampling's number.
+        for fmt in [
+            PixelFormat::Yuva422P10Le,
+            PixelFormat::Yuva422P12Le,
+            PixelFormat::Yuva422P16Le,
+        ] {
+            assert_eq!(fmt.bits_per_pixel_approx(), 48, "{fmt:?}");
+        }
+        for fmt in [
+            PixelFormat::Yuva444P10Le,
+            PixelFormat::Yuva444P12Le,
+            PixelFormat::Yuva444P16Le,
+        ] {
+            assert_eq!(fmt.bits_per_pixel_approx(), 64, "{fmt:?}");
+        }
+        assert_eq!(
+            PixelFormat::Yuva422P16Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv422P16Le.bits_per_pixel_approx() + 16
+        );
+        assert_eq!(
+            PixelFormat::Yuva444P16Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv444P16Le.bits_per_pixel_approx() + 16
+        );
+        assert_eq!(
+            PixelFormat::Yuva422P10Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv422P10Le.bits_per_pixel_approx() + 16
+        );
+        assert_eq!(
+            PixelFormat::Yuva444P12Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv444P12Le.bits_per_pixel_approx() + 16
+        );
     }
 
     #[test]
