@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deep alpha-carrying planar YUV pixel formats completing the Yuva
+  family: `Yuva422P10Le` (46), `Yuva422P12Le` (47), `Yuva444P10Le`
+  (48), `Yuva444P12Le` (49), `Yuva422P16Le` (50), `Yuva444P16Le` (51)
+  — 4-plane planar with full-resolution alpha as plane 3, LE 16-bit
+  words, pinned discriminants.
+- Per-plane significant-bits side-channel on `VideoFrame`
+  (`significant_bits` / `plane_significant_bits` /
+  `set_significant_bits` / `with_significant_bits` /
+  `take_significant_bits`): producers can express mixed per-plane bit
+  depths (e.g. 12-bit luma + 10-bit chroma from a custom signal range)
+  on an existing storage `PixelFormat`, LSB-anchored, composing with
+  the palette side-channel on the same frame.
+
 ## [0.1.30](https://github.com/OxideAV/oxideav-core/compare/v0.1.29...v0.1.30) - 2026-07-17
 
 ### Other

@@ -15,10 +15,15 @@ pure-Rust media framework:
   overflow-checked `pts + duration` for muxers that need a per-
   packet end timestamp.
 * **`Frame`** — one uncompressed audio / video / subtitle chunk.
-  `VideoFrame` can carry an in-band palette side-channel for
-  palette-indexed (`Pal8`) content: `palette()` / `set_palette` /
-  `take_palette` plus `image_planes()` for palette-agnostic plane
-  iteration.
+  `VideoFrame` can carry typed in-band side-channels alongside its
+  pixel planes: a palette for palette-indexed (`Pal8`) content
+  (`palette()` / `set_palette` / `take_palette`) and a per-plane
+  significant-bits record for mixed depths no single `PixelFormat`
+  names — e.g. 12-bit luma with 10-bit chroma from a custom signal
+  range (`significant_bits()` / `set_significant_bits` /
+  `take_significant_bits`, LSB-anchored values). The two records
+  compose on one frame; `image_planes()` iterates pixel data
+  side-channel-agnostically.
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes.
 * **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
@@ -48,9 +53,10 @@ pure-Rust media framework:
   fraction. Property-tested against independent `i128` oracles (~200k
   edge-biased cases in `tests/props.rs`).
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
-  (45+ pixel variants including 8/10/12/16-bit YUV, YUV+alpha at
-  4:2:0/4:2:2/4:4:4, 10/12/14-bit planar GBR(A), packed RGB/RGBA,
-  NV12/NV21, all common sample layouts).
+  (50+ pixel variants including 8/10/12/16-bit YUV, YUV+alpha at
+  4:2:0/4:2:2/4:4:4 in both 8-bit and deep 10/12/16-bit flavours,
+  10/12/14-bit planar GBR(A), packed RGB/RGBA, NV12/NV21, all common
+  sample layouts).
 * **`AttachedPicture`** / **`PictureType`** — ID3v2 `APIC` taxonomy
   shared by ID3v2 / FLAC / MP4 / Vorbis cover-art carriage. `PictureType`
   round-trips byte-for-byte through `from_u8` ↔ `to_u8` over the spec-
