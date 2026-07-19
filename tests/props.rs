@@ -402,3 +402,99 @@ fn bits_msb_reader_never_panics_on_random_ops() {
         }
     }
 }
+
+// ==================== VideoFrame side-channels ====================
+
+/// Model-based property run for the `VideoFrame` side-channels: random
+/// sequences of palette / significant-bits set/take operations checked
+/// against a trivially-correct model (two `Option<Vec<u8>>`s plus the
+/// frozen image planes). The two records must never interfere with each
+/// other or with the image planes, whatever order operations arrive in.
+#[test]
+fn video_frame_side_channels_match_two_option_model() {
+    use oxideav_core::{VideoFrame, VideoPlane};
+
+    let mut rng = Lcg::new(0xF3A7);
+    for _ in 0..500 {
+        // Random image geometry: 0..=4 planes of random shape.
+        let plane_count = (rng.next_u64() % 5) as usize;
+        let planes: Vec<VideoPlane> = (0..plane_count)
+            .map(|_| {
+                let stride = (rng.next_u64() % 16 + 1) as usize;
+                let rows = (rng.next_u64() % 8) as usize;
+                VideoPlane {
+                    stride,
+                    data: (0..stride * rows).map(|_| rng.next_u64() as u8).collect(),
+                }
+            })
+            .collect();
+        let frozen: Vec<(usize, Vec<u8>)> =
+            planes.iter().map(|p| (p.stride, p.data.clone())).collect();
+
+        let mut frame = VideoFrame { pts: None, planes };
+        let mut model_palette: Option<Vec<u8>> = None;
+        let mut model_bits: Option<Vec<u8>> = None;
+
+        for _ in 0..40 {
+            match rng.next_u64() % 6 {
+                0 => {
+                    // Attach/replace/clear the palette (empty clears).
+                    let n = (rng.next_u64() % 4) as usize * 3;
+                    let pal: Vec<u8> = (0..n).map(|_| rng.next_u64() as u8).collect();
+                    model_palette = if pal.is_empty() {
+                        None
+                    } else {
+                        Some(pal.clone())
+                    };
+                    frame.set_palette(pal);
+                }
+                1 => {
+                    // Attach/replace/clear the depth record.
+                    let n = (rng.next_u64() % 6) as usize;
+                    let bits: Vec<u8> = (0..n).map(|_| (rng.next_u64() % 16 + 1) as u8).collect();
+                    model_bits = if bits.is_empty() {
+                        None
+                    } else {
+                        Some(bits.clone())
+                    };
+                    frame.set_significant_bits(bits);
+                }
+                2 => {
+                    assert_eq!(frame.take_palette(), model_palette.take());
+                }
+                3 => {
+                    assert_eq!(frame.take_significant_bits(), model_bits.take());
+                }
+                4 => {
+                    // Per-entry sugar agrees with the raw record.
+                    let idx = rng.next_u64() as usize % 8;
+                    assert_eq!(
+                        frame.plane_significant_bits(idx),
+                        model_bits.as_deref().and_then(|b| b.get(idx).copied())
+                    );
+                }
+                _ => {
+                    let entry = rng.next_u64() as u8;
+                    let expect = model_palette.as_deref().and_then(|p| {
+                        let at = usize::from(entry) * 3;
+                        p.get(at..at + 3).map(|e| [e[0], e[1], e[2]])
+                    });
+                    assert_eq!(frame.palette_rgb(entry), expect);
+                }
+            }
+
+            // Invariants after EVERY operation:
+            assert_eq!(frame.palette(), model_palette.as_deref());
+            assert_eq!(frame.significant_bits(), model_bits.as_deref());
+            // Image planes are never touched by side-channel traffic.
+            assert_eq!(frame.image_plane_count(), frozen.len());
+            for (plane, (stride, data)) in frame.image_planes().iter().zip(&frozen) {
+                assert_eq!(plane.stride, *stride);
+                assert_eq!(&plane.data, data);
+            }
+            // Raw plane vector = image planes + one entry per record.
+            let records = usize::from(model_palette.is_some()) + usize::from(model_bits.is_some());
+            assert_eq!(frame.planes.len(), frozen.len() + records);
+        }
+    }
+}

@@ -212,9 +212,10 @@ fn video_frame_to_arena_sync_frame(v: &crate::VideoFrame) -> Result<arena::sync:
     let stride0 = v.planes[0].stride.max(1);
     let width = stride0 as u32;
     let height = (v.planes[0].data.len() / stride0) as u32;
-    // Count only image planes for the format guess — a palette
-    // side-channel entry (copied verbatim above like any other plane)
-    // must not bump a single-plane palette frame out of the Gray8 label.
+    // Count only image planes for the format guess — side-channel
+    // entries (palette, significant bits; copied verbatim above like
+    // any other plane) must not bump e.g. a single-plane palette frame
+    // out of the Gray8 label.
     let pixel_format = match v.image_plane_count() {
         1 => PixelFormat::Gray8,
         3 => PixelFormat::Yuv420P,
