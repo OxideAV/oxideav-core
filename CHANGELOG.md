@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ExecutionContext::auto()` — caller-side budget derived from
+  `available_parallelism()` (fallback 1), and
+  `ExecutionContext::effective_workers(work_units)` — the uniform
+  codec-side clamp for every internal fan-out.
+- Documented threading contract on the `execution` module: the context
+  is the single threading authority; codecs run serial until granted a
+  budget, bound all fan-out via `effective_workers`, and never query
+  host parallelism directly.
+
 ## [0.1.31](https://github.com/OxideAV/oxideav-core/compare/v0.1.30...v0.1.31) - 2026-07-19
 
 ### Other
