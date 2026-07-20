@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.32](https://github.com/OxideAV/oxideav-core/compare/v0.1.31...v0.1.32) - 2026-07-20
+
+### Other
+
+- threading contract — ExecutionContext::auto() + effective_workers clamp
+
 ### Added
 
 - `ExecutionContext::auto()` — caller-side budget derived from
