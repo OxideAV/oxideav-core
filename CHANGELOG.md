@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pixel formats closing the planar-RGB depth ladder and completing the
+  deep Yuva family at 4:2:0 (pinned discriminants, append-only):
+  `Gbrp8` (52) — native 8-bit planar GBR, one byte per sample;
+  `Gbrp16Le` (53) / `Gbrap16Le` (54) — full-width 16-bit planar
+  GBR(A), LE 16-bit words with all 16 bits significant; and
+  `Yuva420P10Le` (55) / `Yuva420P12Le` (56) / `Yuva420P16Le` (57) —
+  deep 4:2:0 + full-resolution alpha as plane 3, same semantics as the
+  deep Yuva 4:2:2/4:4:4 sextet. All covered by `is_planar` /
+  `has_alpha` / `plane_count` / `bits_per_pixel_approx` and the
+  pinned-discriminant test.
+- Ogg codec identification. Ogg has no codec tag — a logical stream
+  announces its codec via a magic byte prefix on its first (BOS)
+  packet — so the registry gains a prefix-matched resolution path
+  beside the exact-match `CodecTag` index: `CodecInfo::ogg_magics`
+  field with `ogg_magic()` / `ogg_magics()` builders,
+  `CodecRegistry::resolve_ogg_magic_ref` (longest matching magic wins,
+  then registration order; empty magics dropped at registration),
+  `CodecRegistry::all_ogg_registrations` diagnostics, and a defaulted
+  `CodecResolver::resolve_ogg_magic` trait method (`None` by default,
+  overridden by `CodecRegistry`) so Ogg demuxers resolve through
+  `&dyn CodecResolver`. `CodecTag` itself is unchanged (it is not
+  `#[non_exhaustive]`; growing it would be a breaking change).
+
 ## [0.1.32](https://github.com/OxideAV/oxideav-core/compare/v0.1.31...v0.1.32) - 2026-07-20
 
 ### Other

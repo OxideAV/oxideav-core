@@ -53,10 +53,10 @@ pure-Rust media framework:
   fraction. Property-tested against independent `i128` oracles (~200k
   edge-biased cases in `tests/props.rs`).
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
-  (50+ pixel variants including 8/10/12/16-bit YUV, YUV+alpha at
+  (55+ pixel variants including 8/10/12/16-bit YUV, YUV+alpha at
   4:2:0/4:2:2/4:4:4 in both 8-bit and deep 10/12/16-bit flavours,
-  10/12/14-bit planar GBR(A), packed RGB/RGBA, NV12/NV21, all common
-  sample layouts).
+  planar GBR(A) across the full 8/10/12/14/16-bit depth ladder,
+  packed RGB/RGBA, NV12/NV21, all common sample layouts).
 * **`AttachedPicture`** / **`PictureType`** — ID3v2 `APIC` taxonomy
   shared by ID3v2 / FLAC / MP4 / Vorbis cover-art carriage. `PictureType`
   round-trips byte-for-byte through `from_u8` ↔ `to_u8` over the spec-
@@ -72,7 +72,12 @@ pure-Rust media framework:
   container-level tags (AVI FourCC, WAVEFORMATEX `wFormatTag`, MP4 OTI,
   Matroska CodecID strings) to oxideav `CodecId`s. Lets codec crates own
   their own tag claims without pulling a codec registry into every
-  container.
+  container. Ogg's tag-less identification model gets its own path:
+  codecs declare the BOS-packet magic prefixes they answer to
+  (`CodecInfo::ogg_magic(b"\x01vorbis")`, `b"OpusHead"`, …) and Ogg
+  demuxers resolve them with
+  `CodecResolver::resolve_ogg_magic(first_packet)` — longest matching
+  magic wins, then registration order.
 * **`bits`** — shared MSB-first / LSB-first `BitReader` / `BitWriter`
   plus unary helpers. Used by the FLAC, AAC, H.264, HEVC, Vorbis and a
   dozen other codecs in the workspace. The LSB pair (the Vorbis §2.1.4
