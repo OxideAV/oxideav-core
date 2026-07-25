@@ -560,9 +560,11 @@ pub enum PixelFormat {
     // per channel. Planes are ordered G, B, R (and A for the `Gbrap*`
     // variants) — and
     // each sample is stored as a 16-bit little-endian word with the
-    // top bits zero. There is no native 8-bit `Gbrp` variant in this
-    // enum yet because no in-tree codec needs it; if one is added later
-    // it must be appended at a fresh discriminant.
+    // top bits zero. The native 8-bit ([`Gbrp8`](Self::Gbrp8)) and
+    // full-width 16-bit ([`Gbrp16Le`](Self::Gbrp16Le) /
+    // [`Gbrap16Le`](Self::Gbrap16Le)) companions arrived later and
+    // therefore live at fresh appended discriminants (52-54), per the
+    // append-only rule.
     /// 10-bit planar GBR, little-endian 16-bit storage. 3 planes ordered
     /// G, B, R; each sample uses the low 10 bits of a 16-bit word.
     Gbrp10Le = 35,
@@ -651,6 +653,57 @@ pub enum PixelFormat {
     /// 16-bit storage. 4 planes ordered Y, U, V, A; all 16 bits of
     /// each sample word are significant.
     Yuva444P16Le = 51,
+
+    // --- Native 8-bit and full-width 16-bit planar GBR(A) ---
+    //
+    // Companions to the 10/12/14-bit `Gbrp*`/`Gbrap*` family above,
+    // closing the planar-RGB depth ladder at both ends for lossless
+    // RGB codecs whose native coding space is per-plane G, B, R.
+    // Plane order is identical to the rest of the family: G, B, R
+    // (and A as plane index 3 for `Gbrap16Le`, always at full
+    // resolution — RGB has no chroma subsampling). `Gbrp8` stores one
+    // byte per sample with all 8 bits significant; the 16-bit variants
+    // store little-endian 16-bit words with ALL 16 bits significant
+    // (full-scale is 65535, matching the `Yuv*P16Le` convention — no
+    // zero top bits, no separate valid-bits count). Odd in-between
+    // depths on these storage formats (e.g. 9- or 15-bit RGB) are
+    // expressed via the per-plane significant-bits side-channel on
+    // `VideoFrame`, not by new enum variants.
+    /// 8-bit planar GBR. 3 planes ordered G, B, R; one byte per
+    /// sample, all 8 bits significant.
+    Gbrp8 = 52,
+    /// 16-bit planar GBR, little-endian 16-bit storage. 3 planes
+    /// ordered G, B, R; all 16 bits of each sample word are
+    /// significant.
+    Gbrp16Le = 53,
+    /// 16-bit planar GBR + alpha, little-endian 16-bit storage. 4
+    /// planes ordered G, B, R, A; all 16 bits of each sample word are
+    /// significant.
+    Gbrap16Le = 54,
+
+    // --- Deep YUV + alpha at 4:2:0 ---
+    //
+    // Completes the deep Yuva family begun by the 4:2:2/4:4:4 variants
+    // above (46-51) at the remaining chroma sampling. Same conventions:
+    // 4 planes ordered Y, U, V, A with the alpha plane always at full
+    // resolution (one sample per pixel, never chroma-subsampled) as
+    // plane index 3. Every sample — alpha included — is stored as a
+    // little-endian 16-bit word; the 10/12-bit variants keep values in
+    // the low bits of the word with the top bits zero, and the 16-bit
+    // variant has all 16 bits of every word significant (full-scale is
+    // 65535), matching `Yuv420P16Le`.
+    /// 10-bit YUV 4:2:0 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; each sample uses
+    /// the low 10 bits of a 16-bit word.
+    Yuva420P10Le = 55,
+    /// 12-bit YUV 4:2:0 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; each sample uses
+    /// the low 12 bits of a 16-bit word.
+    Yuva420P12Le = 56,
+    /// 16-bit YUV 4:2:0 planar + full-resolution alpha, little-endian
+    /// 16-bit storage. 4 planes ordered Y, U, V, A; all 16 bits of
+    /// each sample word are significant.
+    Yuva420P16Le = 57,
 }
 
 impl PixelFormat {
@@ -685,12 +738,18 @@ impl PixelFormat {
                 | Self::Yuva444P12Le
                 | Self::Yuva422P16Le
                 | Self::Yuva444P16Le
+                | Self::Yuva420P10Le
+                | Self::Yuva420P12Le
+                | Self::Yuva420P16Le
+                | Self::Gbrp8
                 | Self::Gbrp10Le
                 | Self::Gbrap10Le
                 | Self::Gbrp12Le
                 | Self::Gbrap12Le
                 | Self::Gbrp14Le
                 | Self::Gbrap14Le
+                | Self::Gbrp16Le
+                | Self::Gbrap16Le
         )
     }
 
@@ -718,9 +777,13 @@ impl PixelFormat {
                 | Self::Yuva444P12Le
                 | Self::Yuva422P16Le
                 | Self::Yuva444P16Le
+                | Self::Yuva420P10Le
+                | Self::Yuva420P12Le
+                | Self::Yuva420P16Le
                 | Self::Gbrap10Le
                 | Self::Gbrap12Le
                 | Self::Gbrap14Le
+                | Self::Gbrap16Le
         )
     }
 
@@ -746,9 +809,11 @@ impl PixelFormat {
             | Self::YuvJ420P
             | Self::YuvJ422P
             | Self::YuvJ444P
+            | Self::Gbrp8
             | Self::Gbrp10Le
             | Self::Gbrp12Le
-            | Self::Gbrp14Le => 3,
+            | Self::Gbrp14Le
+            | Self::Gbrp16Le => 3,
             Self::Yuva420P
             | Self::Yuva422P
             | Self::Yuva444P
@@ -758,9 +823,13 @@ impl PixelFormat {
             | Self::Yuva444P12Le
             | Self::Yuva422P16Le
             | Self::Yuva444P16Le
+            | Self::Yuva420P10Le
+            | Self::Yuva420P12Le
+            | Self::Yuva420P16Le
             | Self::Gbrap10Le
             | Self::Gbrap12Le
-            | Self::Gbrap14Le => 4,
+            | Self::Gbrap14Le
+            | Self::Gbrap16Le => 4,
             _ => 1,
         }
     }
@@ -803,6 +872,10 @@ impl PixelFormat {
             Self::Yuva422P10Le | Self::Yuva422P12Le | Self::Yuva422P16Le => 48,
             // Deep 4:4:4 + full-res alpha: 4 sample words per pixel.
             Self::Yuva444P10Le | Self::Yuva444P12Le | Self::Yuva444P16Le => 64,
+            // Deep 4:2:0 + full-res alpha in 16-bit words: 16-bit-word
+            // storage cost of the alpha-less 4:2:0 arms above (24) plus
+            // one full-resolution 16-bit alpha word per pixel.
+            Self::Yuva420P10Le | Self::Yuva420P12Le | Self::Yuva420P16Le => 40,
             // Planar GBR(A) at 10/12/14 bits stored in 16-bit words: we
             // report the packed bits-per-pixel density (samples × bits)
             // rather than the 16-bit storage cost, matching how the
@@ -813,6 +886,13 @@ impl PixelFormat {
             Self::Gbrap12Le => 48,
             Self::Gbrp14Le => 42,
             Self::Gbrap14Le => 56,
+            // Native 8-bit GBR: three bytes per pixel, like Rgb24 but
+            // planar. 16-bit GBR(A): packed bits == storage bits (every
+            // bit of each 16-bit word is significant), so the density
+            // and storage numbers coincide.
+            Self::Gbrp8 => 24,
+            Self::Gbrp16Le => 48,
+            Self::Gbrap16Le => 64,
         }
     }
 }
@@ -880,6 +960,12 @@ mod tests {
         assert_eq!(PixelFormat::Yuva444P12Le as u16, 49);
         assert_eq!(PixelFormat::Yuva422P16Le as u16, 50);
         assert_eq!(PixelFormat::Yuva444P16Le as u16, 51);
+        assert_eq!(PixelFormat::Gbrp8 as u16, 52);
+        assert_eq!(PixelFormat::Gbrp16Le as u16, 53);
+        assert_eq!(PixelFormat::Gbrap16Le as u16, 54);
+        assert_eq!(PixelFormat::Yuva420P10Le as u16, 55);
+        assert_eq!(PixelFormat::Yuva420P12Le as u16, 56);
+        assert_eq!(PixelFormat::Yuva420P16Le as u16, 57);
     }
 
     #[test]
@@ -1272,10 +1358,95 @@ mod tests {
             PixelFormat::Gbrap12Le,
             PixelFormat::Gbrp14Le,
             PixelFormat::Gbrap14Le,
+            PixelFormat::Gbrp8,
+            PixelFormat::Gbrp16Le,
+            PixelFormat::Gbrap16Le,
         ];
         let mut seen = std::collections::HashSet::new();
         for fmt in all {
             assert!(seen.insert(fmt as u16), "duplicate discriminant: {fmt:?}");
         }
+    }
+
+    #[test]
+    fn gbr_depth_ladder_ends_metadata() {
+        // Gbrp8 and the 16-bit pair share the family shape: planar,
+        // G/B/R plane order (3 planes), alpha only on Gbrap16Le, never
+        // palette.
+        for fmt in [PixelFormat::Gbrp8, PixelFormat::Gbrp16Le] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 3, "{fmt:?} must have 3 planes");
+            assert!(!fmt.has_alpha(), "{fmt:?} must not have alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+        }
+        assert!(PixelFormat::Gbrap16Le.is_planar());
+        assert_eq!(PixelFormat::Gbrap16Le.plane_count(), 4);
+        assert!(PixelFormat::Gbrap16Le.has_alpha());
+        assert!(!PixelFormat::Gbrap16Le.is_palette());
+    }
+
+    #[test]
+    fn gbr_depth_ladder_ends_bits_per_pixel_approx() {
+        // Gbrp8 matches the packed 8-bit RGB density (planar layout
+        // doesn't change bits-per-pixel), and the 16-bit pair matches
+        // the packed 16-bit RGB(A) densities — for 16-bit words packed
+        // bits equal storage bits.
+        assert_eq!(
+            PixelFormat::Gbrp8.bits_per_pixel_approx(),
+            PixelFormat::Rgb24.bits_per_pixel_approx()
+        );
+        assert_eq!(
+            PixelFormat::Gbrp16Le.bits_per_pixel_approx(),
+            PixelFormat::Rgb48Le.bits_per_pixel_approx()
+        );
+        assert_eq!(
+            PixelFormat::Gbrap16Le.bits_per_pixel_approx(),
+            PixelFormat::Rgba64Le.bits_per_pixel_approx()
+        );
+        assert_eq!(PixelFormat::Gbrp8.bits_per_pixel_approx(), 24);
+        assert_eq!(PixelFormat::Gbrp16Le.bits_per_pixel_approx(), 48);
+        assert_eq!(PixelFormat::Gbrap16Le.bits_per_pixel_approx(), 64);
+    }
+
+    #[test]
+    fn deep_yuva420_planar_metadata() {
+        // The 4:2:0 completions share the deep-Yuva shape: planar, 4
+        // planes (Y, U, V, full-resolution A), alpha set, no palette.
+        for fmt in [
+            PixelFormat::Yuva420P10Le,
+            PixelFormat::Yuva420P12Le,
+            PixelFormat::Yuva420P16Le,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 4, "{fmt:?} must have 4 planes");
+            assert!(fmt.has_alpha(), "{fmt:?} must carry alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+        }
+    }
+
+    #[test]
+    fn deep_yuva420_bits_per_pixel_approx() {
+        // Same estimator convention as the 4:2:2/4:4:4 deep Yuva arms:
+        // 16-bit-word storage cost, with the full-resolution alpha word
+        // adding 16 on top of the alpha-less sampling's number.
+        for fmt in [
+            PixelFormat::Yuva420P10Le,
+            PixelFormat::Yuva420P12Le,
+            PixelFormat::Yuva420P16Le,
+        ] {
+            assert_eq!(fmt.bits_per_pixel_approx(), 40, "{fmt:?}");
+        }
+        assert_eq!(
+            PixelFormat::Yuva420P10Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv420P10Le.bits_per_pixel_approx() + 16
+        );
+        assert_eq!(
+            PixelFormat::Yuva420P12Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv420P12Le.bits_per_pixel_approx() + 16
+        );
+        assert_eq!(
+            PixelFormat::Yuva420P16Le.bits_per_pixel_approx(),
+            PixelFormat::Yuv420P16Le.bits_per_pixel_approx() + 16
+        );
     }
 }
