@@ -14,7 +14,11 @@
 //!   registration whose `tags` contains `ctx.tag`, calls each probe
 //!   (treating `None` as "returns 1.0"), and returns the id with the
 //!   highest resulting confidence. First-registered wins on ties.
-//! - **diagnostic** — `all_implementations`, `all_tag_registrations`.
+//! - **Ogg magic-keyed** — `resolve_ogg_magic(first_packet)` prefix-
+//!   matches the claimed Ogg BOS-packet magics against the packet
+//!   bytes; longest matching magic wins, then registration order.
+//! - **diagnostic** — `all_implementations`, `all_tag_registrations`,
+//!   `all_ogg_registrations`.
 //!
 //! The tag path explicitly DOES NOT short-circuit on "first claim with
 //! no probe" — every claimant is asked, so a lower-priority probed
@@ -261,6 +265,16 @@ pub struct CodecInfo {
     /// claim many tags (an AAC decoder covers several WaveFormat ids,
     /// a FourCC, an MP4 OTI, and a Matroska CodecID string at once).
     pub tags: Vec<CodecTag>,
+    /// Ogg first-packet magic prefixes this codec answers to
+    /// (`\x01vorbis`, `OpusHead`, …). Ogg has no codec tag: a logical
+    /// stream announces its codec through a magic byte prefix on its
+    /// first (BOS) packet, so these claims are prefix-matched by
+    /// [`CodecRegistry::resolve_ogg_magic_ref`] instead of living in
+    /// the exact-match [`CodecTag`] index. Attached with
+    /// [`Self::ogg_magic`] / [`Self::ogg_magics`]. Empty prefixes are
+    /// ignored at registration time (a zero-length prefix would match
+    /// every stream while carrying no evidence).
+    pub ogg_magics: Vec<Vec<u8>>,
     /// Schema of the encoder's recognised option keys
     /// (`CodecParameters::options`). Attached with
     /// [`Self::encoder_options`]. Used for validation / `oxideav list`
@@ -299,6 +313,7 @@ impl CodecInfo {
             encoder_factory: None,
             probe: None,
             tags: Vec::new(),
+            ogg_magics: Vec::new(),
             encoder_options_schema: None,
             decoder_options_schema: None,
             engine_id: None,
@@ -345,6 +360,33 @@ impl CodecInfo {
     /// codec with 3-6 tags reads as one clean block.
     pub fn tags(mut self, tags: impl IntoIterator<Item = CodecTag>) -> Self {
         self.tags.extend(tags);
+        self
+    }
+
+    /// Claim one Ogg first-packet magic prefix for this codec (see
+    /// [`Self::ogg_magics`]). Chain repeatedly for codecs that answer
+    /// to more than one magic:
+    ///
+    /// ```
+    /// # use oxideav_core::registry::CodecInfo;
+    /// # use oxideav_core::CodecId;
+    /// let info = CodecInfo::new(CodecId::new("vorbis")).ogg_magic(b"\x01vorbis");
+    /// # let _ = info;
+    /// ```
+    pub fn ogg_magic(mut self, magic: impl Into<Vec<u8>>) -> Self {
+        self.ogg_magics.push(magic.into());
+        self
+    }
+
+    /// Claim a set of Ogg first-packet magic prefixes for this codec —
+    /// the iterable companion to [`Self::ogg_magic`], mirroring the
+    /// [`Self::tag`] / [`Self::tags`] pair.
+    pub fn ogg_magics<I>(mut self, magics: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<Vec<u8>>,
+    {
+        self.ogg_magics.extend(magics.into_iter().map(Into::into));
         self
     }
 
@@ -437,6 +479,11 @@ pub struct CodecRegistry {
     /// registration order so tie-breaking in `resolve_tag` is
     /// deterministic (first-registered wins).
     tag_index: HashMap<CodecTag, Vec<usize>>,
+    /// Ogg magic-prefix claims: `(magic, registration index)` in
+    /// registration order. Kept as a flat list rather than a map
+    /// because resolution is prefix matching (see
+    /// [`Self::resolve_ogg_magic_ref`]), not exact-key lookup.
+    ogg_index: Vec<(Vec<u8>, usize)>,
 }
 
 /// Internal registry record. Mirrors the subset of [`CodecInfo`]
@@ -469,6 +516,7 @@ impl CodecRegistry {
             encoder_factory,
             probe,
             tags,
+            ogg_magics,
             encoder_options_schema,
             decoder_options_schema,
             // engine_id / engine_probe are metadata attached to a
@@ -520,6 +568,14 @@ impl CodecRegistry {
         });
         for tag in tags {
             self.tag_index.entry(tag).or_default().push(record_idx);
+        }
+        for magic in ogg_magics {
+            // A zero-length prefix would match every stream while
+            // carrying no evidence — drop it here so resolution never
+            // has to special-case it.
+            if !magic.is_empty() {
+                self.ogg_index.push((magic, record_idx));
+            }
         }
     }
 
@@ -711,6 +767,46 @@ impl CodecRegistry {
         }
         best.map(|(_, i)| &self.registrations[i].id)
     }
+
+    /// Inherent form of Ogg magic resolution that returns a reference.
+    /// The owned-value form used by container code lives behind the
+    /// [`CodecResolver`] trait impl below.
+    ///
+    /// Walks every registered Ogg magic prefix (declared via
+    /// [`CodecInfo::ogg_magic`] / [`CodecInfo::ogg_magics`]) and
+    /// returns the codec whose magic is a prefix of `first_packet` —
+    /// the payload of a logical stream's first (BOS) page, or however
+    /// much of it the demuxer has. The **longest** matching magic wins
+    /// (most specific claim); remaining ties are broken by
+    /// registration order (first wins). Unlike the tag path there is
+    /// no probe step: an Ogg magic is itself the bitstream evidence a
+    /// probe would look for, and specificity is expressed by prefix
+    /// length instead of a confidence value.
+    pub fn resolve_ogg_magic_ref(&self, first_packet: &[u8]) -> Option<&CodecId> {
+        let mut best: Option<(usize, usize)> = None; // (magic_len, reg idx)
+        for (magic, idx) in &self.ogg_index {
+            if !first_packet.starts_with(magic) {
+                continue;
+            }
+            // Strict `>` keeps the earlier registration on equal
+            // lengths — `ogg_index` is in registration order.
+            best = match best {
+                None => Some((magic.len(), *idx)),
+                Some((len, _)) if magic.len() > len => Some((magic.len(), *idx)),
+                other => other,
+            };
+        }
+        best.map(|(_, i)| &self.registrations[i].id)
+    }
+
+    /// Iterator over every `(ogg magic, codec_id)` pair currently
+    /// registered, in registration order — the Ogg companion to
+    /// [`all_tag_registrations`](Self::all_tag_registrations).
+    pub fn all_ogg_registrations(&self) -> impl Iterator<Item = (&[u8], &CodecId)> {
+        self.ogg_index
+            .iter()
+            .map(move |(magic, i)| (magic.as_slice(), &self.registrations[*i].id))
+    }
 }
 
 /// Implement the shared [`CodecResolver`] interface so container
@@ -719,6 +815,10 @@ impl CodecRegistry {
 impl CodecResolver for CodecRegistry {
     fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId> {
         self.resolve_tag_ref(ctx).cloned()
+    }
+
+    fn resolve_ogg_magic(&self, first_packet: &[u8]) -> Option<CodecId> {
+        self.resolve_ogg_magic_ref(first_packet).cloned()
     }
 }
 
@@ -921,6 +1021,198 @@ mod tag_tests {
                 "tag {t:?} did not resolve",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod ogg_tests {
+    use super::*;
+    use crate::CodecCapabilities;
+
+    fn info(id: &str) -> CodecInfo {
+        CodecInfo::new(CodecId::new(id)).capabilities(CodecCapabilities::audio(id))
+    }
+
+    /// Registry with the classic Ogg family registered, each under its
+    /// real BOS magic.
+    fn ogg_registry() -> CodecRegistry {
+        let mut reg = CodecRegistry::new();
+        reg.register(info("vorbis").ogg_magic(b"\x01vorbis"));
+        reg.register(info("opus").ogg_magic(b"OpusHead"));
+        reg.register(info("theora").ogg_magic(b"\x80theora"));
+        reg.register(info("flac").ogg_magic(b"\x7fFLAC"));
+        reg
+    }
+
+    #[test]
+    fn resolve_ogg_magic_matches_first_packet_prefix() {
+        let reg = ogg_registry();
+        // A Vorbis identification header: magic + version + channels +
+        // rate + ... — the resolver only needs the prefix to match.
+        let vorbis_id_header = b"\x01vorbis\x00\x00\x00\x00\x02\x44\xac\x00\x00";
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(vorbis_id_header)
+                .map(|c| c.as_str()),
+            Some("vorbis"),
+        );
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"OpusHead\x01\x02\x38\x01")
+                .map(|c| c.as_str()),
+            Some("opus"),
+        );
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"\x80theora\x03\x02\x01")
+                .map(|c| c.as_str()),
+            Some("theora"),
+        );
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"\x7fFLAC\x01\x00")
+                .map(|c| c.as_str()),
+            Some("flac"),
+        );
+    }
+
+    #[test]
+    fn resolve_ogg_magic_exact_length_packet_matches() {
+        // A packet that is exactly the magic (nothing after it) still
+        // resolves — starts_with is inclusive of equality.
+        let reg = ogg_registry();
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"OpusHead").map(|c| c.as_str()),
+            Some("opus"),
+        );
+    }
+
+    #[test]
+    fn resolve_ogg_magic_unknown_or_short_packet_is_none() {
+        let reg = ogg_registry();
+        // Unknown magic.
+        assert!(reg.resolve_ogg_magic_ref(b"Speex   1.2.0").is_none());
+        // Packet shorter than every registered magic.
+        assert!(reg.resolve_ogg_magic_ref(b"Opus").is_none());
+        // Empty packet.
+        assert!(reg.resolve_ogg_magic_ref(b"").is_none());
+    }
+
+    #[test]
+    fn resolve_ogg_magic_longest_prefix_wins_regardless_of_order() {
+        // A shorter magic that is itself a prefix of a longer one must
+        // lose to the more specific claim, whichever registered first.
+        let mut reg = CodecRegistry::new();
+        reg.register(info("generic").ogg_magic(b"Opus"));
+        reg.register(info("opus").ogg_magic(b"OpusHead"));
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"OpusHead\x01")
+                .map(|c| c.as_str()),
+            Some("opus"),
+        );
+        // ...but the shorter claim still wins packets only it matches.
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"OpusTags").map(|c| c.as_str()),
+            Some("generic"),
+        );
+
+        // Same result with the registration order flipped.
+        let mut reg = CodecRegistry::new();
+        reg.register(info("opus").ogg_magic(b"OpusHead"));
+        reg.register(info("generic").ogg_magic(b"Opus"));
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"OpusHead\x01")
+                .map(|c| c.as_str()),
+            Some("opus"),
+        );
+    }
+
+    #[test]
+    fn resolve_ogg_magic_equal_length_tie_first_registered_wins() {
+        let mut reg = CodecRegistry::new();
+        reg.register(info("first").ogg_magic(b"SameMagic"));
+        reg.register(info("second").ogg_magic(b"SameMagic"));
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"SameMagic\x00")
+                .map(|c| c.as_str()),
+            Some("first"),
+        );
+    }
+
+    #[test]
+    fn empty_ogg_magic_is_ignored_at_registration() {
+        let mut reg = CodecRegistry::new();
+        reg.register(info("greedy").ogg_magic(b""));
+        assert!(reg.resolve_ogg_magic_ref(b"anything at all").is_none());
+        assert_eq!(reg.all_ogg_registrations().count(), 0);
+    }
+
+    #[test]
+    fn ogg_magics_plural_builder_and_diagnostics() {
+        // One codec answering to several magics via the iterable
+        // builder; the diagnostic iterator surfaces each claim in
+        // registration order.
+        let mut reg = CodecRegistry::new();
+        reg.register(info("speex").ogg_magics([b"Speex   ".to_vec(), b"speex-alt".to_vec()]));
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"Speex   1.2")
+                .map(|c| c.as_str()),
+            Some("speex"),
+        );
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"speex-alt\x00")
+                .map(|c| c.as_str()),
+            Some("speex"),
+        );
+        let all: Vec<(&[u8], &str)> = reg
+            .all_ogg_registrations()
+            .map(|(m, id)| (m, id.as_str()))
+            .collect();
+        assert_eq!(
+            all,
+            vec![
+                (b"Speex   ".as_slice(), "speex"),
+                (b"speex-alt".as_slice(), "speex"),
+            ],
+        );
+    }
+
+    #[test]
+    fn ogg_claims_compose_with_tag_claims_on_one_registration() {
+        // A codec that lives in both Ogg and Matroska declares both
+        // claim kinds on one CodecInfo; each resolution path finds it.
+        let mut reg = CodecRegistry::new();
+        reg.register(
+            info("vorbis")
+                .tag(CodecTag::matroska("A_VORBIS"))
+                .ogg_magic(b"\x01vorbis"),
+        );
+        let mk = CodecTag::matroska("A_VORBIS");
+        assert_eq!(
+            reg.resolve_tag_ref(&ProbeContext::new(&mk))
+                .map(|c| c.as_str()),
+            Some("vorbis"),
+        );
+        assert_eq!(
+            reg.resolve_ogg_magic_ref(b"\x01vorbis\x00")
+                .map(|c| c.as_str()),
+            Some("vorbis"),
+        );
+    }
+
+    #[test]
+    fn resolver_trait_ogg_surface() {
+        // The owned-value trait form mirrors the inherent form, and
+        // the default implementation (NullCodecResolver) resolves
+        // nothing.
+        let reg = ogg_registry();
+        let resolver: &dyn CodecResolver = &reg;
+        assert_eq!(
+            resolver
+                .resolve_ogg_magic(b"OpusHead\x01")
+                .map(|c| c.0.clone()),
+            Some("opus".to_owned()),
+        );
+        assert!(resolver.resolve_ogg_magic(b"unknown").is_none());
+
+        let null = crate::NullCodecResolver;
+        assert!(null.resolve_ogg_magic(b"OpusHead\x01").is_none());
     }
 }
 

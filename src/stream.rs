@@ -49,6 +49,13 @@ impl std::fmt::Display for CodecId {
 ///   that happen everywhere in the wild (DIV3 that's actually MPEG-4
 ///   Part 2, XVID that's actually MS-MPEG4v3, audio wFormatTag=0x0055
 ///   that could be MP3 or — very rarely — something else, etc.).
+///
+/// **Ogg is intentionally absent** from this enum: Ogg has no codec
+/// tag — a logical stream announces its codec through a magic byte
+/// prefix on its first (BOS) packet, which is prefix-matched rather
+/// than looked up as an exact key. Ogg claims are therefore declared
+/// via [`CodecInfo::ogg_magic`](crate::registry::CodecInfo::ogg_magic)
+/// and resolved via [`CodecResolver::resolve_ogg_magic`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CodecTag {
     /// Four-character code used by AVI's `bmih.biCompression`, MP4 /
@@ -270,6 +277,31 @@ pub trait CodecResolver: Sync {
     /// the highest resulting confidence. Ties are broken by
     /// registration order.
     fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId>;
+
+    /// Resolve an Ogg-carried codec from the payload of a logical
+    /// stream's first (BOS) page.
+    ///
+    /// Ogg has no numeric codec tag at all: a logical stream announces
+    /// its codec purely through a magic byte prefix at the start of the
+    /// first packet (`\x01vorbis`, `OpusHead`, `\x80theora`,
+    /// `\x7fFLAC`, `Speex   `, …). That identification model is
+    /// prefix-shaped rather than exact-key-shaped, so it gets its own
+    /// resolution entry point instead of a [`CodecTag`] form: codec
+    /// crates declare the magic prefixes they answer to at
+    /// registration time, and an Ogg demuxer hands the whole
+    /// first-packet payload (or however much of it it has) to this
+    /// method. Implementations return the codec whose declared magic
+    /// is a prefix of `first_packet`, preferring the **longest**
+    /// matching magic (most specific claim) and breaking remaining
+    /// ties by registration order.
+    ///
+    /// The default implementation resolves nothing, so existing
+    /// resolver implementations (and [`NullCodecResolver`]) are
+    /// unaffected.
+    fn resolve_ogg_magic(&self, first_packet: &[u8]) -> Option<CodecId> {
+        let _ = first_packet;
+        None
+    }
 }
 
 /// Null resolver that resolves nothing — useful as a default when a
