@@ -72,12 +72,13 @@ pure-Rust media framework:
   container-level tags (AVI FourCC, WAVEFORMATEX `wFormatTag`, MP4 OTI,
   Matroska CodecID strings) to oxideav `CodecId`s. Lets codec crates own
   their own tag claims without pulling a codec registry into every
-  container. Ogg's tag-less identification model gets its own path:
-  codecs declare the BOS-packet magic prefixes they answer to
-  (`CodecInfo::ogg_magic(b"\x01vorbis")`, `b"OpusHead"`, …) and Ogg
-  demuxers resolve them with
-  `CodecResolver::resolve_ogg_magic(first_packet)` — longest matching
-  magic wins, then registration order.
+  container. Tag-less identification gets its own container-agnostic
+  path: codecs declare the payload magic prefixes they answer to
+  (`CodecInfo::payload_magic(b"\x01vorbis")`, `b"OpusHead"`, `b"fLaC"`,
+  …) and callers resolve a stream's leading payload bytes with
+  `CodecResolver::resolve_payload_magic(first_bytes)` — longest
+  matching magic wins, then registration order. Serves Ogg's BOS
+  packets and raw elementary-stream sniffing alike.
 * **`bits`** — shared MSB-first / LSB-first `BitReader` / `BitWriter`
   plus unary helpers. Used by the FLAC, AAC, H.264, HEVC, Vorbis and a
   dozen other codecs in the workspace. The LSB pair (the Vorbis §2.1.4

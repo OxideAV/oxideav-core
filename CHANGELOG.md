@@ -19,16 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deep Yuva 4:2:2/4:4:4 sextet. All covered by `is_planar` /
   `has_alpha` / `plane_count` / `bits_per_pixel_approx` and the
   pinned-discriminant test.
-- Ogg codec identification. Ogg has no codec tag — a logical stream
-  announces its codec via a magic byte prefix on its first (BOS)
-  packet — so the registry gains a prefix-matched resolution path
-  beside the exact-match `CodecTag` index: `CodecInfo::ogg_magics`
-  field with `ogg_magic()` / `ogg_magics()` builders,
-  `CodecRegistry::resolve_ogg_magic_ref` (longest matching magic wins,
+- Payload-magic codec identification — a container-agnostic,
+  prefix-matched resolution path beside the exact-match `CodecTag`
+  index, for carriage formats that announce the codec in the payload
+  itself rather than through a tag (the canonical case is an Ogg
+  logical stream's first packet; raw elementary streams identified by
+  a file-head magic are the same shape): `CodecInfo::payload_magics`
+  field with `payload_magic()` / `payload_magics()` builders,
+  `CodecRegistry::resolve_payload_magic_ref` (longest matching magic wins,
   then registration order; empty magics dropped at registration),
-  `CodecRegistry::all_ogg_registrations` diagnostics, and a defaulted
-  `CodecResolver::resolve_ogg_magic` trait method (`None` by default,
-  overridden by `CodecRegistry`) so Ogg demuxers resolve through
+  `CodecRegistry::all_payload_magic_registrations` diagnostics, and a defaulted
+  `CodecResolver::resolve_payload_magic` trait method (`None` by default,
+  overridden by `CodecRegistry`) so demuxers resolve through
   `&dyn CodecResolver`. `CodecTag` itself is unchanged (it is not
   `#[non_exhaustive]`; growing it would be a breaking change).
 

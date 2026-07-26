@@ -50,12 +50,14 @@ impl std::fmt::Display for CodecId {
 ///   Part 2, XVID that's actually MS-MPEG4v3, audio wFormatTag=0x0055
 ///   that could be MP3 or — very rarely — something else, etc.).
 ///
-/// **Ogg is intentionally absent** from this enum: Ogg has no codec
-/// tag — a logical stream announces its codec through a magic byte
-/// prefix on its first (BOS) packet, which is prefix-matched rather
-/// than looked up as an exact key. Ogg claims are therefore declared
-/// via [`CodecInfo::ogg_magic`](crate::registry::CodecInfo::ogg_magic)
-/// and resolved via [`CodecResolver::resolve_ogg_magic`].
+/// **Payload magics are intentionally absent** from this enum: some
+/// carriage formats have no codec tag at all — the codec is announced
+/// by a magic byte prefix on the payload itself (an Ogg logical
+/// stream's first packet is the canonical case), which is
+/// prefix-matched rather than looked up as an exact key. Such claims
+/// are declared via
+/// [`CodecInfo::payload_magic`](crate::registry::CodecInfo::payload_magic)
+/// and resolved via [`CodecResolver::resolve_payload_magic`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CodecTag {
     /// Four-character code used by AVI's `bmih.biCompression`, MP4 /
@@ -278,28 +280,33 @@ pub trait CodecResolver: Sync {
     /// registration order.
     fn resolve_tag(&self, ctx: &ProbeContext) -> Option<CodecId>;
 
-    /// Resolve an Ogg-carried codec from the payload of a logical
-    /// stream's first (BOS) page.
+    /// Resolve a codec from a stream's leading payload bytes, for
+    /// carriage formats that announce the codec in the payload itself
+    /// rather than through a container tag.
     ///
-    /// Ogg has no numeric codec tag at all: a logical stream announces
-    /// its codec purely through a magic byte prefix at the start of the
-    /// first packet (`\x01vorbis`, `OpusHead`, `\x80theora`,
-    /// `\x7fFLAC`, `Speex   `, …). That identification model is
+    /// The canonical case is Ogg, which has no numeric codec tag at
+    /// all: a logical stream announces its codec purely through a
+    /// magic byte prefix at the start of the first packet
+    /// (`\x01vorbis`, `OpusHead`, `\x80theora`, `\x7fFLAC`,
+    /// `Speex   `, …); raw elementary streams identified by a file
+    /// head are the same shape. That identification model is
     /// prefix-shaped rather than exact-key-shaped, so it gets its own
     /// resolution entry point instead of a [`CodecTag`] form: codec
     /// crates declare the magic prefixes they answer to at
-    /// registration time, and an Ogg demuxer hands the whole
-    /// first-packet payload (or however much of it it has) to this
-    /// method. Implementations return the codec whose declared magic
-    /// is a prefix of `first_packet`, preferring the **longest**
+    /// registration time, and the caller hands the stream's leading
+    /// payload bytes (an Ogg demuxer: the first packet of a logical
+    /// stream; a raw-stream prober: the file head — or however much of
+    /// it is available) to this method. Implementations return the
+    /// codec whose declared magic is a prefix of `first_bytes`,
+    /// preferring the **longest**
     /// matching magic (most specific claim) and breaking remaining
     /// ties by registration order.
     ///
     /// The default implementation resolves nothing, so existing
     /// resolver implementations (and [`NullCodecResolver`]) are
     /// unaffected.
-    fn resolve_ogg_magic(&self, first_packet: &[u8]) -> Option<CodecId> {
-        let _ = first_packet;
+    fn resolve_payload_magic(&self, first_bytes: &[u8]) -> Option<CodecId> {
+        let _ = first_bytes;
         None
     }
 }

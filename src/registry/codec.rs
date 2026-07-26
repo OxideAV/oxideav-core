@@ -14,11 +14,14 @@
 //!   registration whose `tags` contains `ctx.tag`, calls each probe
 //!   (treating `None` as "returns 1.0"), and returns the id with the
 //!   highest resulting confidence. First-registered wins on ties.
-//! - **Ogg magic-keyed** — `resolve_ogg_magic(first_packet)` prefix-
-//!   matches the claimed Ogg BOS-packet magics against the packet
-//!   bytes; longest matching magic wins, then registration order.
+//! - **payload-magic-keyed** — `resolve_payload_magic(first_bytes)`
+//!   prefix-matches the claimed payload magic prefixes against a
+//!   stream's leading bytes; longest matching magic wins, then
+//!   registration order. For containers that identify a codec by the
+//!   payload itself rather than a tag (e.g. an Ogg logical stream's
+//!   first packet, or raw elementary streams).
 //! - **diagnostic** — `all_implementations`, `all_tag_registrations`,
-//!   `all_ogg_registrations`.
+//!   `all_payload_magic_registrations`.
 //!
 //! The tag path explicitly DOES NOT short-circuit on "first claim with
 //! no probe" — every claimant is asked, so a lower-priority probed
@@ -265,16 +268,18 @@ pub struct CodecInfo {
     /// claim many tags (an AAC decoder covers several WaveFormat ids,
     /// a FourCC, an MP4 OTI, and a Matroska CodecID string at once).
     pub tags: Vec<CodecTag>,
-    /// Ogg first-packet magic prefixes this codec answers to
-    /// (`\x01vorbis`, `OpusHead`, …). Ogg has no codec tag: a logical
-    /// stream announces its codec through a magic byte prefix on its
-    /// first (BOS) packet, so these claims are prefix-matched by
-    /// [`CodecRegistry::resolve_ogg_magic_ref`] instead of living in
+    /// Payload magic prefixes this codec answers to (`\x01vorbis`,
+    /// `OpusHead`, …). Some carriage formats have no codec tag — the
+    /// codec is announced by a magic byte prefix on the payload itself
+    /// (an Ogg logical stream's first packet is the canonical case;
+    /// raw elementary streams are another). Such claims are
+    /// prefix-matched by
+    /// [`CodecRegistry::resolve_payload_magic_ref`] instead of living in
     /// the exact-match [`CodecTag`] index. Attached with
-    /// [`Self::ogg_magic`] / [`Self::ogg_magics`]. Empty prefixes are
+    /// [`Self::payload_magic`] / [`Self::payload_magics`]. Empty prefixes are
     /// ignored at registration time (a zero-length prefix would match
     /// every stream while carrying no evidence).
-    pub ogg_magics: Vec<Vec<u8>>,
+    pub payload_magics: Vec<Vec<u8>>,
     /// Schema of the encoder's recognised option keys
     /// (`CodecParameters::options`). Attached with
     /// [`Self::encoder_options`]. Used for validation / `oxideav list`
@@ -313,7 +318,7 @@ impl CodecInfo {
             encoder_factory: None,
             probe: None,
             tags: Vec::new(),
-            ogg_magics: Vec::new(),
+            payload_magics: Vec::new(),
             encoder_options_schema: None,
             decoder_options_schema: None,
             engine_id: None,
@@ -363,30 +368,31 @@ impl CodecInfo {
         self
     }
 
-    /// Claim one Ogg first-packet magic prefix for this codec (see
-    /// [`Self::ogg_magics`]). Chain repeatedly for codecs that answer
+    /// Claim one payload magic prefix for this codec (see
+    /// [`Self::payload_magics`]). Chain repeatedly for codecs that answer
     /// to more than one magic:
     ///
     /// ```
     /// # use oxideav_core::registry::CodecInfo;
     /// # use oxideav_core::CodecId;
-    /// let info = CodecInfo::new(CodecId::new("vorbis")).ogg_magic(b"\x01vorbis");
+    /// let info = CodecInfo::new(CodecId::new("vorbis")).payload_magic(b"\x01vorbis");
     /// # let _ = info;
     /// ```
-    pub fn ogg_magic(mut self, magic: impl Into<Vec<u8>>) -> Self {
-        self.ogg_magics.push(magic.into());
+    pub fn payload_magic(mut self, magic: impl Into<Vec<u8>>) -> Self {
+        self.payload_magics.push(magic.into());
         self
     }
 
-    /// Claim a set of Ogg first-packet magic prefixes for this codec —
-    /// the iterable companion to [`Self::ogg_magic`], mirroring the
+    /// Claim a set of payload magic prefixes for this codec — the
+    /// iterable companion to [`Self::payload_magic`], mirroring the
     /// [`Self::tag`] / [`Self::tags`] pair.
-    pub fn ogg_magics<I>(mut self, magics: I) -> Self
+    pub fn payload_magics<I>(mut self, magics: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<Vec<u8>>,
     {
-        self.ogg_magics.extend(magics.into_iter().map(Into::into));
+        self.payload_magics
+            .extend(magics.into_iter().map(Into::into));
         self
     }
 
@@ -479,11 +485,11 @@ pub struct CodecRegistry {
     /// registration order so tie-breaking in `resolve_tag` is
     /// deterministic (first-registered wins).
     tag_index: HashMap<CodecTag, Vec<usize>>,
-    /// Ogg magic-prefix claims: `(magic, registration index)` in
+    /// Payload magic-prefix claims: `(magic, registration index)` in
     /// registration order. Kept as a flat list rather than a map
     /// because resolution is prefix matching (see
-    /// [`Self::resolve_ogg_magic_ref`]), not exact-key lookup.
-    ogg_index: Vec<(Vec<u8>, usize)>,
+    /// [`Self::resolve_payload_magic_ref`]), not exact-key lookup.
+    magic_index: Vec<(Vec<u8>, usize)>,
 }
 
 /// Internal registry record. Mirrors the subset of [`CodecInfo`]
@@ -516,7 +522,7 @@ impl CodecRegistry {
             encoder_factory,
             probe,
             tags,
-            ogg_magics,
+            payload_magics,
             encoder_options_schema,
             decoder_options_schema,
             // engine_id / engine_probe are metadata attached to a
@@ -569,12 +575,12 @@ impl CodecRegistry {
         for tag in tags {
             self.tag_index.entry(tag).or_default().push(record_idx);
         }
-        for magic in ogg_magics {
+        for magic in payload_magics {
             // A zero-length prefix would match every stream while
             // carrying no evidence — drop it here so resolution never
             // has to special-case it.
             if !magic.is_empty() {
-                self.ogg_index.push((magic, record_idx));
+                self.magic_index.push((magic, record_idx));
             }
         }
     }
@@ -768,28 +774,29 @@ impl CodecRegistry {
         best.map(|(_, i)| &self.registrations[i].id)
     }
 
-    /// Inherent form of Ogg magic resolution that returns a reference.
-    /// The owned-value form used by container code lives behind the
-    /// [`CodecResolver`] trait impl below.
+    /// Inherent form of payload-magic resolution that returns a
+    /// reference. The owned-value form used by container code lives
+    /// behind the [`CodecResolver`] trait impl below.
     ///
-    /// Walks every registered Ogg magic prefix (declared via
-    /// [`CodecInfo::ogg_magic`] / [`CodecInfo::ogg_magics`]) and
-    /// returns the codec whose magic is a prefix of `first_packet` —
-    /// the payload of a logical stream's first (BOS) page, or however
-    /// much of it the demuxer has. The **longest** matching magic wins
-    /// (most specific claim); remaining ties are broken by
-    /// registration order (first wins). Unlike the tag path there is
-    /// no probe step: an Ogg magic is itself the bitstream evidence a
-    /// probe would look for, and specificity is expressed by prefix
-    /// length instead of a confidence value.
-    pub fn resolve_ogg_magic_ref(&self, first_packet: &[u8]) -> Option<&CodecId> {
+    /// Walks every registered payload magic prefix (declared via
+    /// [`CodecInfo::payload_magic`] / [`CodecInfo::payload_magics`]) and
+    /// returns the codec whose magic is a prefix of `first_bytes` —
+    /// however much of the stream's leading payload the caller has
+    /// (an Ogg demuxer passes the first packet of a logical stream; a
+    /// raw-stream prober passes the file head). The **longest**
+    /// matching magic wins (most specific claim); remaining ties are
+    /// broken by registration order (first wins). Unlike the tag path
+    /// there is no probe step: a payload magic is itself the bitstream
+    /// evidence a probe would look for, and specificity is expressed
+    /// by prefix length instead of a confidence value.
+    pub fn resolve_payload_magic_ref(&self, first_bytes: &[u8]) -> Option<&CodecId> {
         let mut best: Option<(usize, usize)> = None; // (magic_len, reg idx)
-        for (magic, idx) in &self.ogg_index {
-            if !first_packet.starts_with(magic) {
+        for (magic, idx) in &self.magic_index {
+            if !first_bytes.starts_with(magic) {
                 continue;
             }
             // Strict `>` keeps the earlier registration on equal
-            // lengths — `ogg_index` is in registration order.
+            // lengths — `magic_index` is in registration order.
             best = match best {
                 None => Some((magic.len(), *idx)),
                 Some((len, _)) if magic.len() > len => Some((magic.len(), *idx)),
@@ -799,11 +806,11 @@ impl CodecRegistry {
         best.map(|(_, i)| &self.registrations[i].id)
     }
 
-    /// Iterator over every `(ogg magic, codec_id)` pair currently
-    /// registered, in registration order — the Ogg companion to
-    /// [`all_tag_registrations`](Self::all_tag_registrations).
-    pub fn all_ogg_registrations(&self) -> impl Iterator<Item = (&[u8], &CodecId)> {
-        self.ogg_index
+    /// Iterator over every `(payload magic, codec_id)` pair currently
+    /// registered, in registration order — the payload-magic companion
+    /// to [`all_tag_registrations`](Self::all_tag_registrations).
+    pub fn all_payload_magic_registrations(&self) -> impl Iterator<Item = (&[u8], &CodecId)> {
+        self.magic_index
             .iter()
             .map(move |(magic, i)| (magic.as_slice(), &self.registrations[*i].id))
     }
@@ -817,8 +824,8 @@ impl CodecResolver for CodecRegistry {
         self.resolve_tag_ref(ctx).cloned()
     }
 
-    fn resolve_ogg_magic(&self, first_packet: &[u8]) -> Option<CodecId> {
-        self.resolve_ogg_magic_ref(first_packet).cloned()
+    fn resolve_payload_magic(&self, first_packet: &[u8]) -> Option<CodecId> {
+        self.resolve_payload_magic_ref(first_packet).cloned()
     }
 }
 
@@ -1025,7 +1032,7 @@ mod tag_tests {
 }
 
 #[cfg(test)]
-mod ogg_tests {
+mod payload_magic_tests {
     use super::*;
     use crate::CodecCapabilities;
 
@@ -1035,133 +1042,135 @@ mod ogg_tests {
 
     /// Registry with the classic Ogg family registered, each under its
     /// real BOS magic.
-    fn ogg_registry() -> CodecRegistry {
+    fn ogg_family_registry() -> CodecRegistry {
         let mut reg = CodecRegistry::new();
-        reg.register(info("vorbis").ogg_magic(b"\x01vorbis"));
-        reg.register(info("opus").ogg_magic(b"OpusHead"));
-        reg.register(info("theora").ogg_magic(b"\x80theora"));
-        reg.register(info("flac").ogg_magic(b"\x7fFLAC"));
+        reg.register(info("vorbis").payload_magic(b"\x01vorbis"));
+        reg.register(info("opus").payload_magic(b"OpusHead"));
+        reg.register(info("theora").payload_magic(b"\x80theora"));
+        reg.register(info("flac").payload_magic(b"\x7fFLAC"));
         reg
     }
 
     #[test]
-    fn resolve_ogg_magic_matches_first_packet_prefix() {
-        let reg = ogg_registry();
+    fn resolve_payload_magic_matches_first_packet_prefix() {
+        let reg = ogg_family_registry();
         // A Vorbis identification header: magic + version + channels +
         // rate + ... — the resolver only needs the prefix to match.
         let vorbis_id_header = b"\x01vorbis\x00\x00\x00\x00\x02\x44\xac\x00\x00";
         assert_eq!(
-            reg.resolve_ogg_magic_ref(vorbis_id_header)
+            reg.resolve_payload_magic_ref(vorbis_id_header)
                 .map(|c| c.as_str()),
             Some("vorbis"),
         );
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"OpusHead\x01\x02\x38\x01")
+            reg.resolve_payload_magic_ref(b"OpusHead\x01\x02\x38\x01")
                 .map(|c| c.as_str()),
             Some("opus"),
         );
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"\x80theora\x03\x02\x01")
+            reg.resolve_payload_magic_ref(b"\x80theora\x03\x02\x01")
                 .map(|c| c.as_str()),
             Some("theora"),
         );
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"\x7fFLAC\x01\x00")
+            reg.resolve_payload_magic_ref(b"\x7fFLAC\x01\x00")
                 .map(|c| c.as_str()),
             Some("flac"),
         );
     }
 
     #[test]
-    fn resolve_ogg_magic_exact_length_packet_matches() {
+    fn resolve_payload_magic_exact_length_packet_matches() {
         // A packet that is exactly the magic (nothing after it) still
         // resolves — starts_with is inclusive of equality.
-        let reg = ogg_registry();
+        let reg = ogg_family_registry();
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"OpusHead").map(|c| c.as_str()),
+            reg.resolve_payload_magic_ref(b"OpusHead")
+                .map(|c| c.as_str()),
             Some("opus"),
         );
     }
 
     #[test]
-    fn resolve_ogg_magic_unknown_or_short_packet_is_none() {
-        let reg = ogg_registry();
+    fn resolve_payload_magic_unknown_or_short_packet_is_none() {
+        let reg = ogg_family_registry();
         // Unknown magic.
-        assert!(reg.resolve_ogg_magic_ref(b"Speex   1.2.0").is_none());
+        assert!(reg.resolve_payload_magic_ref(b"Speex   1.2.0").is_none());
         // Packet shorter than every registered magic.
-        assert!(reg.resolve_ogg_magic_ref(b"Opus").is_none());
+        assert!(reg.resolve_payload_magic_ref(b"Opus").is_none());
         // Empty packet.
-        assert!(reg.resolve_ogg_magic_ref(b"").is_none());
+        assert!(reg.resolve_payload_magic_ref(b"").is_none());
     }
 
     #[test]
-    fn resolve_ogg_magic_longest_prefix_wins_regardless_of_order() {
+    fn resolve_payload_magic_longest_prefix_wins_regardless_of_order() {
         // A shorter magic that is itself a prefix of a longer one must
         // lose to the more specific claim, whichever registered first.
         let mut reg = CodecRegistry::new();
-        reg.register(info("generic").ogg_magic(b"Opus"));
-        reg.register(info("opus").ogg_magic(b"OpusHead"));
+        reg.register(info("generic").payload_magic(b"Opus"));
+        reg.register(info("opus").payload_magic(b"OpusHead"));
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"OpusHead\x01")
+            reg.resolve_payload_magic_ref(b"OpusHead\x01")
                 .map(|c| c.as_str()),
             Some("opus"),
         );
         // ...but the shorter claim still wins packets only it matches.
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"OpusTags").map(|c| c.as_str()),
+            reg.resolve_payload_magic_ref(b"OpusTags")
+                .map(|c| c.as_str()),
             Some("generic"),
         );
 
         // Same result with the registration order flipped.
         let mut reg = CodecRegistry::new();
-        reg.register(info("opus").ogg_magic(b"OpusHead"));
-        reg.register(info("generic").ogg_magic(b"Opus"));
+        reg.register(info("opus").payload_magic(b"OpusHead"));
+        reg.register(info("generic").payload_magic(b"Opus"));
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"OpusHead\x01")
+            reg.resolve_payload_magic_ref(b"OpusHead\x01")
                 .map(|c| c.as_str()),
             Some("opus"),
         );
     }
 
     #[test]
-    fn resolve_ogg_magic_equal_length_tie_first_registered_wins() {
+    fn resolve_payload_magic_equal_length_tie_first_registered_wins() {
         let mut reg = CodecRegistry::new();
-        reg.register(info("first").ogg_magic(b"SameMagic"));
-        reg.register(info("second").ogg_magic(b"SameMagic"));
+        reg.register(info("first").payload_magic(b"SameMagic"));
+        reg.register(info("second").payload_magic(b"SameMagic"));
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"SameMagic\x00")
+            reg.resolve_payload_magic_ref(b"SameMagic\x00")
                 .map(|c| c.as_str()),
             Some("first"),
         );
     }
 
     #[test]
-    fn empty_ogg_magic_is_ignored_at_registration() {
+    fn empty_payload_magic_is_ignored_at_registration() {
         let mut reg = CodecRegistry::new();
-        reg.register(info("greedy").ogg_magic(b""));
-        assert!(reg.resolve_ogg_magic_ref(b"anything at all").is_none());
-        assert_eq!(reg.all_ogg_registrations().count(), 0);
+        reg.register(info("greedy").payload_magic(b""));
+        assert!(reg.resolve_payload_magic_ref(b"anything at all").is_none());
+        assert_eq!(reg.all_payload_magic_registrations().count(), 0);
     }
 
     #[test]
-    fn ogg_magics_plural_builder_and_diagnostics() {
+    fn payload_magics_plural_builder_and_diagnostics() {
         // One codec answering to several magics via the iterable
         // builder; the diagnostic iterator surfaces each claim in
         // registration order.
         let mut reg = CodecRegistry::new();
-        reg.register(info("speex").ogg_magics([b"Speex   ".to_vec(), b"speex-alt".to_vec()]));
+        reg.register(info("speex").payload_magics([b"Speex   ".to_vec(), b"speex-alt".to_vec()]));
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"Speex   1.2")
+            reg.resolve_payload_magic_ref(b"Speex   1.2")
                 .map(|c| c.as_str()),
             Some("speex"),
         );
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"speex-alt\x00")
+            reg.resolve_payload_magic_ref(b"speex-alt\x00")
                 .map(|c| c.as_str()),
             Some("speex"),
         );
         let all: Vec<(&[u8], &str)> = reg
-            .all_ogg_registrations()
+            .all_payload_magic_registrations()
             .map(|(m, id)| (m, id.as_str()))
             .collect();
         assert_eq!(
@@ -1174,14 +1183,14 @@ mod ogg_tests {
     }
 
     #[test]
-    fn ogg_claims_compose_with_tag_claims_on_one_registration() {
+    fn magic_claims_compose_with_tag_claims_on_one_registration() {
         // A codec that lives in both Ogg and Matroska declares both
         // claim kinds on one CodecInfo; each resolution path finds it.
         let mut reg = CodecRegistry::new();
         reg.register(
             info("vorbis")
                 .tag(CodecTag::matroska("A_VORBIS"))
-                .ogg_magic(b"\x01vorbis"),
+                .payload_magic(b"\x01vorbis"),
         );
         let mk = CodecTag::matroska("A_VORBIS");
         assert_eq!(
@@ -1190,29 +1199,49 @@ mod ogg_tests {
             Some("vorbis"),
         );
         assert_eq!(
-            reg.resolve_ogg_magic_ref(b"\x01vorbis\x00")
+            reg.resolve_payload_magic_ref(b"\x01vorbis\x00")
                 .map(|c| c.as_str()),
             Some("vorbis"),
         );
     }
 
     #[test]
-    fn resolver_trait_ogg_surface() {
+    fn resolver_trait_payload_magic_surface() {
         // The owned-value trait form mirrors the inherent form, and
         // the default implementation (NullCodecResolver) resolves
         // nothing.
-        let reg = ogg_registry();
+        let reg = ogg_family_registry();
         let resolver: &dyn CodecResolver = &reg;
         assert_eq!(
             resolver
-                .resolve_ogg_magic(b"OpusHead\x01")
+                .resolve_payload_magic(b"OpusHead\x01")
                 .map(|c| c.0.clone()),
             Some("opus".to_owned()),
         );
-        assert!(resolver.resolve_ogg_magic(b"unknown").is_none());
+        assert!(resolver.resolve_payload_magic(b"unknown").is_none());
 
         let null = crate::NullCodecResolver;
-        assert!(null.resolve_ogg_magic(b"OpusHead\x01").is_none());
+        assert!(null.resolve_payload_magic(b"OpusHead\x01").is_none());
+    }
+
+    /// The surface is container-agnostic: a raw elementary stream
+    /// identified by a file-head magic resolves through the same path
+    /// as the Ogg family — nothing about the mechanism is Ogg-shaped.
+    #[test]
+    fn payload_magic_serves_non_ogg_carriage() {
+        let mut reg = CodecRegistry::new();
+        reg.register(info("flac").payload_magic(b"fLaC"));
+        reg.register(info("shorten").payload_magic(b"ajkg"));
+
+        assert_eq!(
+            reg.resolve_payload_magic_ref(b"fLaC\x00\x00\x00\x22"),
+            Some(&CodecId::new("flac"))
+        );
+        assert_eq!(
+            reg.resolve_payload_magic_ref(b"ajkg\x02"),
+            Some(&CodecId::new("shorten"))
+        );
+        assert_eq!(reg.resolve_payload_magic_ref(b"RIFF"), None);
     }
 }
 
