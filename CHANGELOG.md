@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.33](https://github.com/OxideAV/oxideav-core/compare/v0.1.32...v0.1.33) - 2026-07-26
+
+### Other
+
+- generalize codec magic claims — payload_magic replaces the Ogg-named surface
+- README + CHANGELOG: GBR depth-ladder ends, deep 4:2:0 Yuva, Ogg BOS-magic resolution
+- Ogg BOS-magic codec claims + prefix-matched resolution
+- 8/16-bit planar GBR(A) + deep 4:2:0 Yuva pixel formats
+
 ### Added
 
 - Pixel formats closing the planar-RGB depth ladder and completing the
