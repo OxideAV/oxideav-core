@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pixel formats from the r431 family-hole audit (pinned discriminants,
+  append-only), each with a named consumer class whose wire format
+  produces the layout natively:
+  - `Gbrap8` (58) — 8-bit planar GBR + alpha, one byte per sample,
+    4 planes ordered G, B, R, A. Completes the planar GBR(A) family:
+    every depth on the 8/10/12/14/16 ladder now has both an alpha-less
+    and an alpha-carrying variant. Asked by a lossless RGB codec whose
+    8-bit planar RGBA previously detoured through `Gbrap10Le`'s
+    16-bit-word storage at double the memory cost.
+  - `Ya16Le` (59) — packed 16-bit grayscale + alpha, LE words with all
+    16 bits significant, interleaved Y then A like `Ya8`. Ends the
+    gray+alpha ladder at the depth the plain gray ladder already
+    reaches (`Gray16Le`); still-image wire formats carry 16-bit
+    greyscale-with-alpha natively, which previously detoured through
+    `Rgba64Le` at triple the gray payload.
+  - `CmykInverted` (60) — packed 8-bit inverted-ink CMYK (0 = full
+    ink), the variant `Cmyk` (33) reserved by name when it was added.
+    Print-side corpora store ink coverage inverted on the wire;
+    decoders can now hand those samples through losslessly.
+
+  All covered by `is_planar` / `has_alpha` / `plane_count` /
+  `bits_per_pixel_approx`, the pinned-discriminant test, and per-family
+  metadata tests. `cargo semver-checks`: additive, no semver update
+  required.
+
+- Audit design notes — holes considered and rejected (additive re-adds
+  are cheap if a consumer materialises):
+  - `Gray14Le` and other odd gray(+alpha) depths: no sibling wire
+    format is natively 14-bit gray; in-between depths are the job of
+    the per-plane significant-bits side-channel.
+  - `Yuv440P`/`YuvJ440P`: a legal JPEG sampling, but no in-workspace
+    consumer on record (`Yuv411P` was added on evidence of real
+    corpora; no such evidence exists here yet).
+  - `Yuva411P`: no alpha-carrying 4:1:1 wire format among siblings.
+  - Deep semi-planar (10/16-bit NV12-style): semi-planar exists for
+    hardware interop; no pure-Rust sibling emits it natively.
+  - `Bgr48Le`/`Bgra64Le`/`Argb64Le` packed swizzles: no wire format
+    demands byte-order variants at 16 bits; swizzling is conversion
+    work, not carriage.
+  - Packed 5:5:5/5:6:5/1:5:5:5 16-bit RGB: legacy image wire formats
+    carry them, but existing decoders expand losslessly to 24/32-bit
+    output and none has asked for pass-through.
+  - Float sample formats (e.g. 32-bit float planar GBR): the pixel
+    enum has no floating-point axis at all; introducing one is a
+    design decision beyond hole-filling, deferred until a consumer
+    with a float-native wire format exists in the workspace.
+
 ## [0.1.33](https://github.com/OxideAV/oxideav-core/compare/v0.1.32...v0.1.33) - 2026-07-26
 
 ### Other
