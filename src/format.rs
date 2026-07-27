@@ -704,6 +704,21 @@ pub enum PixelFormat {
     /// 16-bit storage. 4 planes ordered Y, U, V, A; all 16 bits of
     /// each sample word are significant.
     Yuva420P16Le = 57,
+
+    // --- 8-bit planar GBR + alpha ---
+    //
+    // Alpha-carrying companion to `Gbrp8`, filling the last hole in
+    // the planar GBR(A) family: with this variant every depth on the
+    // ladder (8/10/12/14/16) exists in both alpha-less and
+    // alpha-carrying form. Same conventions as the rest of the family:
+    // planes ordered G, B, R, A with the alpha plane at full
+    // resolution (RGB has no chroma subsampling) as plane index 3,
+    // one byte per sample, all 8 bits significant. Lossless RGB codecs
+    // whose native coding space is per-plane G, B, R carry 8-bit RGBA
+    // in exactly this shape.
+    /// 8-bit planar GBR + alpha. 4 planes ordered G, B, R, A; one
+    /// byte per sample, all 8 bits significant.
+    Gbrap8 = 58,
 }
 
 impl PixelFormat {
@@ -742,6 +757,7 @@ impl PixelFormat {
                 | Self::Yuva420P12Le
                 | Self::Yuva420P16Le
                 | Self::Gbrp8
+                | Self::Gbrap8
                 | Self::Gbrp10Le
                 | Self::Gbrap10Le
                 | Self::Gbrp12Le
@@ -780,6 +796,7 @@ impl PixelFormat {
                 | Self::Yuva420P10Le
                 | Self::Yuva420P12Le
                 | Self::Yuva420P16Le
+                | Self::Gbrap8
                 | Self::Gbrap10Le
                 | Self::Gbrap12Le
                 | Self::Gbrap14Le
@@ -826,6 +843,7 @@ impl PixelFormat {
             | Self::Yuva420P10Le
             | Self::Yuva420P12Le
             | Self::Yuva420P16Le
+            | Self::Gbrap8
             | Self::Gbrap10Le
             | Self::Gbrap12Le
             | Self::Gbrap14Le
@@ -893,6 +911,9 @@ impl PixelFormat {
             Self::Gbrp8 => 24,
             Self::Gbrp16Le => 48,
             Self::Gbrap16Le => 64,
+            // 8-bit GBR + alpha: four bytes per pixel, like Rgba but
+            // planar.
+            Self::Gbrap8 => 32,
         }
     }
 }
@@ -966,6 +987,7 @@ mod tests {
         assert_eq!(PixelFormat::Yuva420P10Le as u16, 55);
         assert_eq!(PixelFormat::Yuva420P12Le as u16, 56);
         assert_eq!(PixelFormat::Yuva420P16Le as u16, 57);
+        assert_eq!(PixelFormat::Gbrap8 as u16, 58);
     }
 
     #[test]
@@ -1359,6 +1381,7 @@ mod tests {
             PixelFormat::Gbrp14Le,
             PixelFormat::Gbrap14Le,
             PixelFormat::Gbrp8,
+            PixelFormat::Gbrap8,
             PixelFormat::Gbrp16Le,
             PixelFormat::Gbrap16Le,
         ];
@@ -1406,6 +1429,56 @@ mod tests {
         assert_eq!(PixelFormat::Gbrp8.bits_per_pixel_approx(), 24);
         assert_eq!(PixelFormat::Gbrp16Le.bits_per_pixel_approx(), 48);
         assert_eq!(PixelFormat::Gbrap16Le.bits_per_pixel_approx(), 64);
+    }
+
+    #[test]
+    fn gbrap8_metadata() {
+        // Gbrap8 completes the GBR(A) family: every depth on the
+        // 8/10/12/14/16 ladder now has both an alpha-less and an
+        // alpha-carrying variant. Shape matches the rest of the
+        // alpha-carrying family: planar, 4 planes (G, B, R,
+        // full-resolution A), alpha set, never palette.
+        let fmt = PixelFormat::Gbrap8;
+        assert!(fmt.is_planar());
+        assert_eq!(fmt.plane_count(), 4);
+        assert!(fmt.has_alpha());
+        assert!(!fmt.is_palette());
+    }
+
+    #[test]
+    fn gbrap8_bits_per_pixel_approx() {
+        // Four bytes per pixel: the packed Rgba density (planar layout
+        // doesn't change bits-per-pixel), i.e. the alpha plane adds a
+        // full 8 bits on top of Gbrp8.
+        assert_eq!(PixelFormat::Gbrap8.bits_per_pixel_approx(), 32);
+        assert_eq!(
+            PixelFormat::Gbrap8.bits_per_pixel_approx(),
+            PixelFormat::Rgba.bits_per_pixel_approx()
+        );
+        assert_eq!(
+            PixelFormat::Gbrap8.bits_per_pixel_approx(),
+            PixelFormat::Gbrp8.bits_per_pixel_approx() + 8
+        );
+    }
+
+    #[test]
+    fn gbr_family_alpha_ladder_complete() {
+        // Every GBR depth has an alpha companion with exactly one more
+        // plane and the same planarity — the asymmetry Gbrap8 closed.
+        let pairs = [
+            (PixelFormat::Gbrp8, PixelFormat::Gbrap8),
+            (PixelFormat::Gbrp10Le, PixelFormat::Gbrap10Le),
+            (PixelFormat::Gbrp12Le, PixelFormat::Gbrap12Le),
+            (PixelFormat::Gbrp14Le, PixelFormat::Gbrap14Le),
+            (PixelFormat::Gbrp16Le, PixelFormat::Gbrap16Le),
+        ];
+        for (gbr, gbra) in pairs {
+            assert!(gbr.is_planar() && gbra.is_planar());
+            assert_eq!(gbr.plane_count(), 3, "{gbr:?}");
+            assert_eq!(gbra.plane_count(), 4, "{gbra:?}");
+            assert!(!gbr.has_alpha(), "{gbr:?}");
+            assert!(gbra.has_alpha(), "{gbra:?}");
+        }
     }
 
     #[test]
