@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.34](https://github.com/OxideAV/oxideav-core/compare/v0.1.33...v0.1.34) - 2026-07-27
+
+### Other
+
+- README + CHANGELOG: r431 pixel-format family-hole audit
+- Ya16Le + CmykInverted — gray+alpha ladder end and the reserved inverted-ink CMYK
+- Gbrap8 — 8-bit planar GBR + alpha (discriminant 58)
+
 ### Added
 
 - Pixel formats from the r431 family-hole audit (pinned discriminants,
