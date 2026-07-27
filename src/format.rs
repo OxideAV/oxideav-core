@@ -541,8 +541,8 @@ pub enum PixelFormat {
     /// "Regular" convention: C=0 means no cyan ink (white), C=255 means
     /// full cyan. Used by JPEG 4-component scans from non-Adobe encoders
     /// and by many print-side image toolchains. Adobe Photoshop's
-    /// inverted CMYK (where 0 = full ink) is a separate variant reserved
-    /// for a future `CmykInverted`.
+    /// inverted CMYK (where 0 = full ink) is the separate
+    /// [`CmykInverted`](Self::CmykInverted) variant.
     Cmyk = 33,
 
     // --- Wide-horizontal subsampled YUV ---
@@ -719,6 +719,35 @@ pub enum PixelFormat {
     /// 8-bit planar GBR + alpha. 4 planes ordered G, B, R, A; one
     /// byte per sample, all 8 bits significant.
     Gbrap8 = 58,
+
+    // --- Deep gray + alpha ---
+    //
+    // 16-bit companion to `Ya8`, ending the gray+alpha ladder at the
+    // same depth the plain gray ladder already reaches (`Gray16Le`).
+    // Still-image wire formats carry 16-bit greyscale-with-alpha
+    // natively (PNG colour type 4 at bit depth 16); without this
+    // variant that content must detour through `Rgba64Le`, tripling
+    // the gray payload and losing the "single luminance component"
+    // semantics. Same packed shape as `Ya8` — interleaved Y then A —
+    // with each sample widened to a little-endian 16-bit word, all 16
+    // bits significant (full-scale is 65535, the `Gray16Le`
+    // convention). In-between gray+alpha depths stay the job of the
+    // per-plane significant-bits side-channel.
+    /// Packed 16-bit grayscale + alpha, little-endian, 4 bytes/pixel
+    /// (Y, A). All 16 bits of each sample word are significant.
+    Ya16Le = 59,
+
+    // --- Print / prepress, inverted-ink convention ---
+    //
+    // The companion `Cmyk` (33) reserved this name when it was added:
+    // Adobe-authored 4-component scans store ink coverage inverted on
+    // the wire (0 = full ink, 255 = no ink), and decoders that want to
+    // hand the wire values through losslessly need a format that says
+    // so rather than silently re-using the regular-convention `Cmyk`.
+    /// Packed 8-bit inverted CMYK, 4 bytes/pixel in byte order C, M,
+    /// Y, K. Inverted-ink convention: C=0 means full cyan ink, C=255
+    /// means no cyan (white) — the complement of [`Cmyk`](Self::Cmyk).
+    CmykInverted = 60,
 }
 
 impl PixelFormat {
@@ -784,6 +813,7 @@ impl PixelFormat {
                 | Self::Abgr
                 | Self::Rgba64Le
                 | Self::Ya8
+                | Self::Ya16Le
                 | Self::Yuva420P
                 | Self::Yuva422P
                 | Self::Yuva444P
@@ -860,13 +890,16 @@ impl PixelFormat {
             Self::MonoBlack | Self::MonoWhite => 1,
             Self::Gray8 | Self::Pal8 => 8,
             Self::Ya8 => 16,
+            // 16-bit gray + alpha: two LE 16-bit words per pixel, all
+            // bits significant — packed bits equal storage bits.
+            Self::Ya16Le => 32,
             Self::Gray16Le | Self::Gray10Le | Self::Gray12Le => 16,
             Self::Rgb24 | Self::Bgr24 => 24,
             Self::Rgba | Self::Bgra | Self::Argb | Self::Abgr => 32,
             Self::Rgb48Le => 48,
             Self::Rgba64Le => 64,
             Self::Yuyv422 | Self::Uyvy422 => 16,
-            Self::Cmyk => 32,
+            Self::Cmyk | Self::CmykInverted => 32,
             // Planar YUV: 4:2:0 ≈ 12, 4:2:2 ≈ 16, 4:4:4 ≈ 24
             // 10/12-bit variants double the byte count but we report the
             // packed-bits-per-pixel estimate for a uniform heuristic.
@@ -988,6 +1021,8 @@ mod tests {
         assert_eq!(PixelFormat::Yuva420P12Le as u16, 56);
         assert_eq!(PixelFormat::Yuva420P16Le as u16, 57);
         assert_eq!(PixelFormat::Gbrap8 as u16, 58);
+        assert_eq!(PixelFormat::Ya16Le as u16, 59);
+        assert_eq!(PixelFormat::CmykInverted as u16, 60);
     }
 
     #[test]
@@ -1479,6 +1514,51 @@ mod tests {
             assert!(!gbr.has_alpha(), "{gbr:?}");
             assert!(gbra.has_alpha(), "{gbra:?}");
         }
+    }
+
+    #[test]
+    fn ya16le_metadata() {
+        // Same packed shape as Ya8 (interleaved Y, A in one plane),
+        // widened to 16-bit LE words: not planar, single plane, alpha
+        // set, never palette. Density is exactly double Ya8's and
+        // matches half of Rgba64Le (two components instead of four).
+        let fmt = PixelFormat::Ya16Le;
+        assert!(!fmt.is_planar());
+        assert_eq!(fmt.plane_count(), 1);
+        assert!(fmt.has_alpha());
+        assert!(!fmt.is_palette());
+        assert_eq!(fmt.bits_per_pixel_approx(), 32);
+        assert_eq!(
+            fmt.bits_per_pixel_approx(),
+            PixelFormat::Ya8.bits_per_pixel_approx() * 2
+        );
+        assert_eq!(
+            fmt.bits_per_pixel_approx(),
+            PixelFormat::Rgba64Le.bits_per_pixel_approx() / 2
+        );
+        // The alpha word adds a full 16 bits on top of Gray16Le.
+        assert_eq!(
+            fmt.bits_per_pixel_approx(),
+            PixelFormat::Gray16Le.bits_per_pixel_approx() + 16
+        );
+    }
+
+    #[test]
+    fn cmyk_inverted_metadata() {
+        // The inverted-ink convention changes sample semantics, not
+        // layout: CmykInverted must be metadata-identical to Cmyk on
+        // every shape predicate.
+        let (reg, inv) = (PixelFormat::Cmyk, PixelFormat::CmykInverted);
+        for fmt in [reg, inv] {
+            assert!(!fmt.is_planar(), "{fmt:?}");
+            assert_eq!(fmt.plane_count(), 1, "{fmt:?}");
+            assert!(!fmt.has_alpha(), "{fmt:?}");
+            assert!(!fmt.is_palette(), "{fmt:?}");
+        }
+        assert_eq!(reg.bits_per_pixel_approx(), inv.bits_per_pixel_approx());
+        assert_eq!(inv.bits_per_pixel_approx(), 32);
+        // They remain distinct formats on the wire-stable axis.
+        assert_ne!(reg as u16, inv as u16);
     }
 
     #[test]
