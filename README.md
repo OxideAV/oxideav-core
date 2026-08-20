@@ -53,12 +53,18 @@ pure-Rust media framework:
   fraction. Property-tested against independent `i128` oracles (~200k
   edge-biased cases in `tests/props.rs`).
 * **`PixelFormat`** / **`SampleFormat`** — enum of supported raw formats
-  (60+ pixel variants including 8/10/12/16-bit YUV, YUV+alpha at
-  4:2:0/4:2:2/4:4:4 in both 8-bit and deep 10/12/16-bit flavours,
-  planar GBR(A) across the full 8/10/12/14/16-bit depth ladder with an
-  alpha companion at every depth, packed RGB/RGBA, gray+alpha at 8 and
-  16 bits, CMYK in both ink conventions, NV12/NV21, all common sample
-  layouts).
+  (70 pixel variants including 8/10/12/16-bit YUV at
+  4:2:0/4:2:2/4:4:4/4:1:1/4:4:0, YUV+alpha at 4:2:0/4:2:2/4:4:4 in both
+  8-bit and deep 10/12/16-bit flavours, planar GBR(A) across the full
+  8/10/12/14/16-bit depth ladder with an alpha companion at every
+  depth, scene-referred 32-bit float gray/RGB(A)/planar-GBR(A) for
+  linear-light HDR, packed RGB/RGBA, gray+alpha at 8 and 16 bits, CMYK
+  in both ink conventions, NV12/NV21, all common sample layouts), plus
+  plane-geometry helpers on every variant: `chroma_subsampling()`
+  (log2 shifts per sampling class), `plane_dimensions()`
+  (ceil-division subsampled grids), and tightly-packed sizing via
+  `plane_row_bytes()` / `plane_size_bytes()` / `frame_size_bytes()`
+  with checked arithmetic.
 * **`AttachedPicture`** / **`PictureType`** — ID3v2 `APIC` taxonomy
   shared by ID3v2 / FLAC / MP4 / Vorbis cover-art carriage. `PictureType`
   round-trips byte-for-byte through `from_u8` ↔ `to_u8` over the spec-

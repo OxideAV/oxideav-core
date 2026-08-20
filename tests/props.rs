@@ -8,6 +8,7 @@
 use oxideav_core::bits::{BitReader, BitReaderLsb, BitWriter, BitWriterLsb};
 use oxideav_core::rational::Rational;
 use oxideav_core::time::{rescale, rescale_checked, rescale_rnd, Rounding, TimeBase, Timestamp};
+use oxideav_core::PixelFormat;
 
 /// Minimal deterministic PRNG (64-bit LCG, high-bits output).
 struct Lcg(u64);
@@ -495,6 +496,156 @@ fn video_frame_side_channels_match_two_option_model() {
             // Raw plane vector = image planes + one entry per record.
             let records = usize::from(model_palette.is_some()) + usize::from(model_bits.is_some());
             assert_eq!(frame.planes.len(), frozen.len() + records);
+        }
+    }
+}
+
+// ==================== PixelFormat plane geometry ====================
+
+/// Every `PixelFormat` variant, in discriminant order (mirrors the
+/// in-crate unit-test list; extend on every appended variant).
+const ALL_PIXEL_FORMATS: [PixelFormat; 70] = [
+    PixelFormat::Yuv420P,
+    PixelFormat::Yuv422P,
+    PixelFormat::Yuv444P,
+    PixelFormat::Rgb24,
+    PixelFormat::Rgba,
+    PixelFormat::Gray8,
+    PixelFormat::Pal8,
+    PixelFormat::Bgr24,
+    PixelFormat::Bgra,
+    PixelFormat::Argb,
+    PixelFormat::Abgr,
+    PixelFormat::Rgb48Le,
+    PixelFormat::Rgba64Le,
+    PixelFormat::Gray16Le,
+    PixelFormat::Gray10Le,
+    PixelFormat::Gray12Le,
+    PixelFormat::Yuv420P10Le,
+    PixelFormat::Yuv422P10Le,
+    PixelFormat::Yuv444P10Le,
+    PixelFormat::Yuv420P12Le,
+    PixelFormat::Yuv422P12Le,
+    PixelFormat::Yuv444P12Le,
+    PixelFormat::YuvJ420P,
+    PixelFormat::YuvJ422P,
+    PixelFormat::YuvJ444P,
+    PixelFormat::Nv12,
+    PixelFormat::Nv21,
+    PixelFormat::Ya8,
+    PixelFormat::Yuva420P,
+    PixelFormat::MonoBlack,
+    PixelFormat::MonoWhite,
+    PixelFormat::Yuyv422,
+    PixelFormat::Uyvy422,
+    PixelFormat::Cmyk,
+    PixelFormat::Yuv411P,
+    PixelFormat::Gbrp10Le,
+    PixelFormat::Gbrap10Le,
+    PixelFormat::Gbrp12Le,
+    PixelFormat::Gbrap12Le,
+    PixelFormat::Gbrp14Le,
+    PixelFormat::Gbrap14Le,
+    PixelFormat::Yuv420P16Le,
+    PixelFormat::Yuv422P16Le,
+    PixelFormat::Yuv444P16Le,
+    PixelFormat::Yuva422P,
+    PixelFormat::Yuva444P,
+    PixelFormat::Yuva422P10Le,
+    PixelFormat::Yuva422P12Le,
+    PixelFormat::Yuva444P10Le,
+    PixelFormat::Yuva444P12Le,
+    PixelFormat::Yuva422P16Le,
+    PixelFormat::Yuva444P16Le,
+    PixelFormat::Gbrp8,
+    PixelFormat::Gbrp16Le,
+    PixelFormat::Gbrap16Le,
+    PixelFormat::Yuva420P10Le,
+    PixelFormat::Yuva420P12Le,
+    PixelFormat::Yuva420P16Le,
+    PixelFormat::Gbrap8,
+    PixelFormat::Ya16Le,
+    PixelFormat::CmykInverted,
+    PixelFormat::Yuv440P,
+    PixelFormat::Yuv440P10Le,
+    PixelFormat::Yuv440P12Le,
+    PixelFormat::Yuv440P16Le,
+    PixelFormat::GrayF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::RgbaF32Le,
+    PixelFormat::GbrpF32Le,
+    PixelFormat::GbrapF32Le,
+];
+
+/// An edge-biased picture dimension: 0, 1, tiny odds, and sizes around
+/// subsampling boundaries.
+fn edge_dim(rng: &mut Lcg) -> u32 {
+    match rng.next_u64() % 8 {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        4 => (rng.next_u64() % 9) as u32,
+        5 => (rng.next_u64() % 4098) as u32 | 1, // odd
+        6 => 4096,
+        _ => (rng.next_u64() % 4098) as u32,
+    }
+}
+
+#[test]
+fn pixel_format_geometry_invariants_random_sizes() {
+    let mut rng = Lcg::new(0x440F);
+    for _ in 0..2000 {
+        let w = edge_dim(&mut rng);
+        let h = edge_dim(&mut rng);
+        for fmt in ALL_PIXEL_FORMATS {
+            // Plane 0 is always the full pixel grid.
+            assert_eq!(fmt.plane_dimensions(0, w, h), Some((w, h)), "{fmt:?}");
+            // The plane table is dense: Some for every plane below
+            // plane_count, None at and beyond it.
+            for p in 0..fmt.plane_count() {
+                assert!(fmt.plane_dimensions(p, w, h).is_some(), "{fmt:?} p{p}");
+            }
+            assert_eq!(fmt.plane_dimensions(fmt.plane_count(), w, h), None);
+
+            // Chroma planes are the ceil-shifted luma grid.
+            if let (Some((ssx, ssy)), true) = (fmt.chroma_subsampling(), fmt.plane_count() >= 3) {
+                for p in [1, 2] {
+                    let (pw, ph) = fmt.plane_dimensions(p, w, h).unwrap();
+                    assert_eq!(pw, w.div_ceil(1 << ssx), "{fmt:?} p{p} w={w}");
+                    assert_eq!(ph, h.div_ceil(1 << ssy), "{fmt:?} p{p} h={h}");
+                }
+            }
+
+            // Sizes at these dimensions never overflow, and the frame
+            // is exactly the sum of its planes.
+            let total = fmt.frame_size_bytes(w, h).unwrap();
+            let sum: usize = (0..fmt.plane_count())
+                .map(|p| fmt.plane_size_bytes(p, w, h).unwrap())
+                .sum();
+            assert_eq!(total, sum, "{fmt:?} {w}x{h}");
+
+            // Each plane size is row bytes × plane height.
+            for p in 0..fmt.plane_count() {
+                let (_, ph) = fmt.plane_dimensions(p, w, h).unwrap();
+                assert_eq!(
+                    fmt.plane_size_bytes(p, w, h).unwrap(),
+                    fmt.plane_row_bytes(p, w).unwrap() * ph as usize,
+                    "{fmt:?} p{p}"
+                );
+            }
+
+            // Tightly-packed storage bits ≥ packed-density estimate.
+            let storage_bits = total as u128 * 8;
+            let density_bits = w as u128 * h as u128 * fmt.bits_per_pixel_approx() as u128;
+            assert!(
+                storage_bits >= density_bits,
+                "{fmt:?} {w}x{h}: {storage_bits} < {density_bits}"
+            );
+
+            // Monotonicity: growing the picture never shrinks a frame.
+            assert!(fmt.frame_size_bytes(w + 1, h).unwrap() >= total, "{fmt:?}");
+            assert!(fmt.frame_size_bytes(w, h + 1).unwrap() >= total, "{fmt:?}");
         }
     }
 }

@@ -748,6 +748,65 @@ pub enum PixelFormat {
     /// Y, K. Inverted-ink convention: C=0 means full cyan ink, C=255
     /// means no cyan (white) — the complement of [`Cmyk`](Self::Cmyk).
     CmykInverted = 60,
+
+    // --- 4:4:0 planar YUV (full-width, half-height chroma) ---
+    //
+    // Vertical-only chroma subsampling: each chroma plane keeps the
+    // full luma width but carries half the rows — subsampling shifts
+    // ssx = 0, ssy = 1, the transpose of 4:2:2's half-width,
+    // full-height geometry. A legal JPEG sampling combination (luma
+    // H=1, V=2) seen in real-world corpora, and a coded
+    // chroma-sampling mode of video bitstreams whose sampling flags
+    // allow horizontal and vertical decimation to be chosen
+    // independently. The depth ladder mirrors the other planar YUV
+    // samplings: 8-bit bytes, then 10/12-bit values in the low bits
+    // of little-endian 16-bit words, then full-width 16-bit words
+    // with every bit significant (full-scale is 65535).
+    /// 8-bit YUV 4:4:0, planar (Y, U, V). Chroma at full width, half
+    /// height (ssx = 0, ssy = 1).
+    Yuv440P = 61,
+    /// 10-bit YUV 4:4:0 planar, little-endian 16-bit storage. Each
+    /// sample uses the low 10 bits of a 16-bit word.
+    Yuv440P10Le = 62,
+    /// 12-bit YUV 4:4:0 planar, little-endian 16-bit storage. Each
+    /// sample uses the low 12 bits of a 16-bit word.
+    Yuv440P12Le = 63,
+    /// 16-bit YUV 4:4:0 planar, little-endian 16-bit storage. All 16
+    /// bits of each sample word are significant.
+    Yuv440P16Le = 64,
+
+    // --- Scene-referred 32-bit float (linear-light HDR) ---
+    //
+    // IEEE 754 binary32 components stored as little-endian 32-bit
+    // words, one word per sample. Unlike every integer format above
+    // there is no integer full-scale: samples are scene-referred
+    // linear light where 1.0 is the nominal diffuse-white anchor and
+    // values outside [0, 1] are legal (speculars above white,
+    // negative out-of-gamut excursions). Needed by HDR image wire
+    // formats whose native component type is floating point. The
+    // packed trio mirrors `Gray8`/`Rgb24`/`Rgba` component orders at
+    // float width; the planar pair extends the planar GBR(A) family
+    // beyond the integer depth ladder, with the usual G, B, R (+ A)
+    // plane order and the alpha plane at full resolution as plane
+    // index 3.
+    /// Packed 32-bit float grayscale, little-endian, 4 bytes/pixel.
+    /// Scene-referred linear light.
+    GrayF32Le = 65,
+    /// Packed 32-bit float RGB, little-endian, 12 bytes/pixel in
+    /// component order R, G, B. Scene-referred linear light.
+    RgbF32Le = 66,
+    /// Packed 32-bit float RGBA, little-endian, 16 bytes/pixel in
+    /// component order R, G, B, A. Scene-referred linear light;
+    /// alpha is straight (non-premultiplied), nominal range [0, 1].
+    RgbaF32Le = 67,
+    /// 32-bit float planar GBR, little-endian. 3 planes ordered G, B,
+    /// R; one 4-byte word per sample. Scene-referred linear light.
+    GbrpF32Le = 68,
+    /// 32-bit float planar GBR + alpha, little-endian. 4 planes
+    /// ordered G, B, R, A; one 4-byte word per sample; the alpha
+    /// plane is at full resolution as plane index 3, straight
+    /// (non-premultiplied), nominal range [0, 1].
+    GbrapF32Le = 69,
 }
 
 impl PixelFormat {
@@ -768,6 +827,10 @@ impl PixelFormat {
                 | Self::Yuv420P16Le
                 | Self::Yuv422P16Le
                 | Self::Yuv444P16Le
+                | Self::Yuv440P
+                | Self::Yuv440P10Le
+                | Self::Yuv440P12Le
+                | Self::Yuv440P16Le
                 | Self::YuvJ420P
                 | Self::YuvJ422P
                 | Self::YuvJ444P
@@ -795,6 +858,8 @@ impl PixelFormat {
                 | Self::Gbrap14Le
                 | Self::Gbrp16Le
                 | Self::Gbrap16Le
+                | Self::GbrpF32Le
+                | Self::GbrapF32Le
         )
     }
 
@@ -831,6 +896,19 @@ impl PixelFormat {
                 | Self::Gbrap12Le
                 | Self::Gbrap14Le
                 | Self::Gbrap16Le
+                | Self::RgbaF32Le
+                | Self::GbrapF32Le
+        )
+    }
+
+    /// True for the 32-bit IEEE-float variants, packed or planar.
+    /// Float formats are scene-referred: samples carry linear light
+    /// with no integer full-scale — 1.0 is the nominal diffuse-white
+    /// anchor and values outside [0, 1] are legal.
+    pub fn is_float(&self) -> bool {
+        matches!(
+            self,
+            Self::GrayF32Le | Self::RgbF32Le | Self::RgbaF32Le | Self::GbrpF32Le | Self::GbrapF32Le
         )
     }
 
@@ -853,6 +931,10 @@ impl PixelFormat {
             | Self::Yuv420P16Le
             | Self::Yuv422P16Le
             | Self::Yuv444P16Le
+            | Self::Yuv440P
+            | Self::Yuv440P10Le
+            | Self::Yuv440P12Le
+            | Self::Yuv440P16Le
             | Self::YuvJ420P
             | Self::YuvJ422P
             | Self::YuvJ444P
@@ -860,7 +942,8 @@ impl PixelFormat {
             | Self::Gbrp10Le
             | Self::Gbrp12Le
             | Self::Gbrp14Le
-            | Self::Gbrp16Le => 3,
+            | Self::Gbrp16Le
+            | Self::GbrpF32Le => 3,
             Self::Yuva420P
             | Self::Yuva422P
             | Self::Yuva444P
@@ -877,7 +960,8 @@ impl PixelFormat {
             | Self::Gbrap10Le
             | Self::Gbrap12Le
             | Self::Gbrap14Le
-            | Self::Gbrap16Le => 4,
+            | Self::Gbrap16Le
+            | Self::GbrapF32Le => 4,
             _ => 1,
         }
     }
@@ -908,9 +992,14 @@ impl PixelFormat {
             // full res + 2 chroma planes each subsampled by 4).
             Self::Yuv411P => 12,
             Self::Yuv422P | Self::YuvJ422P => 16,
+            // 4:4:0 packs the same 2 samples/pixel as 4:2:2 (Y at full
+            // res + 2 chroma planes at half height, full width).
+            Self::Yuv440P => 16,
             Self::Yuv444P | Self::YuvJ444P => 24,
             Self::Yuv420P10Le | Self::Yuv420P12Le | Self::Yuv420P16Le => 24,
             Self::Yuv422P10Le | Self::Yuv422P12Le | Self::Yuv422P16Le => 32,
+            // Deep 4:4:0 matches deep 4:2:2 — 2 sample words per pixel.
+            Self::Yuv440P10Le | Self::Yuv440P12Le | Self::Yuv440P16Le => 32,
             Self::Yuv444P10Le | Self::Yuv444P12Le | Self::Yuv444P16Le => 48,
             Self::Yuva420P => 20,
             // 4:2:2 + full-res alpha: 8 (Y) + 4 (U) + 4 (V) + 8 (A).
@@ -947,7 +1036,271 @@ impl PixelFormat {
             // 8-bit GBR + alpha: four bytes per pixel, like Rgba but
             // planar.
             Self::Gbrap8 => 32,
+            // 32-bit float family: every sample is a full binary32
+            // word, so packed bits equal storage bits (32 per sample;
+            // no chroma subsampling anywhere in the family).
+            Self::GrayF32Le => 32,
+            Self::RgbF32Le | Self::GbrpF32Le => 96,
+            Self::RgbaF32Le | Self::GbrapF32Le => 128,
         }
+    }
+
+    /// Log2 chroma-subsampling shifts `(ssx, ssy)` relative to the
+    /// luma grid, for formats that carry chroma on a subsampled (or
+    /// potentially subsampled) grid. The chroma sample grid is the
+    /// luma grid right-shifted by `ssx` horizontally and `ssy`
+    /// vertically, with ceiling division for odd luma sizes (see
+    /// [`plane_dimensions`](Self::plane_dimensions)).
+    ///
+    /// | sampling | `(ssx, ssy)` | chroma geometry |
+    /// |----------|--------------|-----------------|
+    /// | 4:2:0    | `(1, 1)`     | half width, half height |
+    /// | 4:2:2    | `(1, 0)`     | half width, full height |
+    /// | 4:4:4    | `(0, 0)`     | full resolution |
+    /// | 4:1:1    | `(2, 0)`     | quarter width, full height |
+    /// | 4:4:0    | `(0, 1)`     | full width, half height |
+    ///
+    /// Returns `None` for formats without a distinct chroma grid
+    /// (grayscale, RGB/GBR in any layout, palette, mono, CMYK).
+    /// Packed 4:2:2 (`Yuyv422`/`Uyvy422`) and semi-planar 4:2:0
+    /// (`Nv12`/`Nv21`) report their sampling even though the chroma
+    /// samples don't live in standalone planes.
+    ///
+    /// ```
+    /// use oxideav_core::PixelFormat;
+    /// // 4:4:0: full-width, half-height chroma.
+    /// assert_eq!(PixelFormat::Yuv440P.chroma_subsampling(), Some((0, 1)));
+    /// // 4:2:0: subsampled on both axes.
+    /// assert_eq!(PixelFormat::Yuv420P.chroma_subsampling(), Some((1, 1)));
+    /// // RGB has no chroma grid.
+    /// assert_eq!(PixelFormat::Rgba.chroma_subsampling(), None);
+    /// ```
+    pub fn chroma_subsampling(&self) -> Option<(u32, u32)> {
+        match self {
+            // 4:2:0 — half width, half height.
+            Self::Yuv420P
+            | Self::YuvJ420P
+            | Self::Yuv420P10Le
+            | Self::Yuv420P12Le
+            | Self::Yuv420P16Le
+            | Self::Nv12
+            | Self::Nv21
+            | Self::Yuva420P
+            | Self::Yuva420P10Le
+            | Self::Yuva420P12Le
+            | Self::Yuva420P16Le => Some((1, 1)),
+            // 4:2:2 — half width, full height (packed 4:2:2 included).
+            Self::Yuv422P
+            | Self::YuvJ422P
+            | Self::Yuv422P10Le
+            | Self::Yuv422P12Le
+            | Self::Yuv422P16Le
+            | Self::Yuva422P
+            | Self::Yuva422P10Le
+            | Self::Yuva422P12Le
+            | Self::Yuva422P16Le
+            | Self::Yuyv422
+            | Self::Uyvy422 => Some((1, 0)),
+            // 4:4:4 — chroma at full resolution.
+            Self::Yuv444P
+            | Self::YuvJ444P
+            | Self::Yuv444P10Le
+            | Self::Yuv444P12Le
+            | Self::Yuv444P16Le
+            | Self::Yuva444P
+            | Self::Yuva444P10Le
+            | Self::Yuva444P12Le
+            | Self::Yuva444P16Le => Some((0, 0)),
+            // 4:1:1 — quarter width, full height.
+            Self::Yuv411P => Some((2, 0)),
+            // 4:4:0 — full width, half height.
+            Self::Yuv440P | Self::Yuv440P10Le | Self::Yuv440P12Le | Self::Yuv440P16Le => {
+                Some((0, 1))
+            }
+            // Everything else has no distinct chroma grid.
+            _ => None,
+        }
+    }
+
+    /// Sample-grid dimensions of plane `plane` for a `width` ×
+    /// `height` picture, with ceiling division on subsampled axes so
+    /// odd luma sizes still cover every pixel.
+    ///
+    /// Conventions:
+    /// - Plane 0 (luma / the packed plane) is always `(width, height)`.
+    /// - Chroma planes (indices 1 and 2 of planar YUV, index 1 of the
+    ///   semi-planar formats) are the luma grid right-shifted by the
+    ///   [`chroma_subsampling`](Self::chroma_subsampling) factors.
+    ///   Semi-planar chroma dimensions are in chroma *positions* —
+    ///   each position stores two interleaved samples, which
+    ///   [`plane_row_bytes`](Self::plane_row_bytes) accounts for.
+    /// - Alpha planes (index 3) and all planar-RGB planes are at full
+    ///   resolution.
+    /// - Packed, palette, and bit-packed mono formats report pixel
+    ///   dimensions for their single plane; per-row byte cost comes
+    ///   from [`plane_row_bytes`](Self::plane_row_bytes).
+    ///
+    /// Returns `None` when `plane >= plane_count()`.
+    ///
+    /// ```
+    /// use oxideav_core::PixelFormat;
+    /// // 4:4:0 chroma: full width, half height (odd height rounds up).
+    /// assert_eq!(
+    ///     PixelFormat::Yuv440P.plane_dimensions(1, 640, 481),
+    ///     Some((640, 241))
+    /// );
+    /// // Alpha plane of a deep YUVA format stays at full resolution.
+    /// assert_eq!(
+    ///     PixelFormat::Yuva420P10Le.plane_dimensions(3, 7, 5),
+    ///     Some((7, 5))
+    /// );
+    /// assert_eq!(PixelFormat::Rgb24.plane_dimensions(1, 8, 8), None);
+    /// ```
+    pub fn plane_dimensions(&self, plane: usize, width: u32, height: u32) -> Option<(u32, u32)> {
+        if plane >= self.plane_count() {
+            return None;
+        }
+        match (self.chroma_subsampling(), plane) {
+            (Some((ssx, ssy)), 1 | 2) => {
+                Some((width.div_ceil(1 << ssx), height.div_ceil(1 << ssy)))
+            }
+            _ => Some((width, height)),
+        }
+    }
+
+    /// Tightly-packed byte count of one row of plane `plane` for a
+    /// picture `width` pixels wide — no stride padding or alignment.
+    /// Real codecs frequently over-allocate rows for alignment; this
+    /// is the minimum a row occupies.
+    ///
+    /// Returns `None` when `plane >= plane_count()` or the byte count
+    /// overflows `usize`.
+    pub fn plane_row_bytes(&self, plane: usize, width: u32) -> Option<usize> {
+        let (pw, _) = self.plane_dimensions(plane, width, 1)?;
+        let pw = pw as usize;
+        let bytes_per_position: usize = match self {
+            // Bit-packed mono: 8 pixels per byte, ragged tail byte.
+            Self::MonoBlack | Self::MonoWhite => return Some(pw.div_ceil(8)),
+            // Packed 4:2:2 macropixels: 4 bytes per 2 pixels; an odd
+            // trailing pixel still occupies a full macropixel.
+            Self::Yuyv422 | Self::Uyvy422 => return pw.div_ceil(2).checked_mul(4),
+            // One byte per sample position.
+            Self::Gray8
+            | Self::Pal8
+            | Self::Yuv420P
+            | Self::Yuv422P
+            | Self::Yuv444P
+            | Self::Yuv411P
+            | Self::Yuv440P
+            | Self::YuvJ420P
+            | Self::YuvJ422P
+            | Self::YuvJ444P
+            | Self::Yuva420P
+            | Self::Yuva422P
+            | Self::Yuva444P
+            | Self::Gbrp8
+            | Self::Gbrap8 => 1,
+            // Semi-planar: one byte per luma sample on plane 0, an
+            // interleaved two-sample pair per chroma position on
+            // plane 1.
+            Self::Nv12 | Self::Nv21 => {
+                if plane == 0 {
+                    1
+                } else {
+                    2
+                }
+            }
+            // Little-endian 16-bit words (10/12/14/16-bit storage).
+            Self::Gray10Le
+            | Self::Gray12Le
+            | Self::Gray16Le
+            | Self::Yuv420P10Le
+            | Self::Yuv422P10Le
+            | Self::Yuv444P10Le
+            | Self::Yuv420P12Le
+            | Self::Yuv422P12Le
+            | Self::Yuv444P12Le
+            | Self::Yuv420P16Le
+            | Self::Yuv422P16Le
+            | Self::Yuv444P16Le
+            | Self::Yuv440P10Le
+            | Self::Yuv440P12Le
+            | Self::Yuv440P16Le
+            | Self::Yuva422P10Le
+            | Self::Yuva422P12Le
+            | Self::Yuva444P10Le
+            | Self::Yuva444P12Le
+            | Self::Yuva422P16Le
+            | Self::Yuva444P16Le
+            | Self::Yuva420P10Le
+            | Self::Yuva420P12Le
+            | Self::Yuva420P16Le
+            | Self::Gbrp10Le
+            | Self::Gbrap10Le
+            | Self::Gbrp12Le
+            | Self::Gbrap12Le
+            | Self::Gbrp14Le
+            | Self::Gbrap14Le
+            | Self::Gbrp16Le
+            | Self::Gbrap16Le => 2,
+            // Packed multi-component: whole-pixel byte cost.
+            Self::Ya8 => 2,
+            Self::Rgb24 | Self::Bgr24 => 3,
+            Self::Rgba
+            | Self::Bgra
+            | Self::Argb
+            | Self::Abgr
+            | Self::Cmyk
+            | Self::CmykInverted
+            | Self::Ya16Le => 4,
+            Self::Rgb48Le => 6,
+            Self::Rgba64Le => 8,
+            // 32-bit float: one binary32 word per sample (packed
+            // grayscale and the planar GBR(A) planes), or the
+            // whole-pixel cost for packed multi-component float.
+            Self::GrayF32Le | Self::GbrpF32Le | Self::GbrapF32Le => 4,
+            Self::RgbF32Le => 12,
+            Self::RgbaF32Le => 16,
+        };
+        pw.checked_mul(bytes_per_position)
+    }
+
+    /// Tightly-packed byte size of plane `plane` for a `width` ×
+    /// `height` picture:
+    /// [`plane_row_bytes`](Self::plane_row_bytes) × the plane's row
+    /// count from [`plane_dimensions`](Self::plane_dimensions).
+    ///
+    /// Returns `None` when `plane >= plane_count()` or the size
+    /// overflows `usize`.
+    pub fn plane_size_bytes(&self, plane: usize, width: u32, height: u32) -> Option<usize> {
+        let (_, ph) = self.plane_dimensions(plane, width, height)?;
+        self.plane_row_bytes(plane, width)?.checked_mul(ph as usize)
+    }
+
+    /// Tightly-packed byte size of a whole `width` × `height` frame in
+    /// this format — the sum of
+    /// [`plane_size_bytes`](Self::plane_size_bytes) over every plane,
+    /// with no stride padding or inter-plane alignment. Out-of-band
+    /// side data (the `Pal8` palette table, significant-bits records)
+    /// is not included.
+    ///
+    /// Returns `None` on `usize` overflow.
+    ///
+    /// ```
+    /// use oxideav_core::PixelFormat;
+    /// // 4:2:0 at 4×4: 16 luma + 4 + 4 chroma bytes.
+    /// assert_eq!(PixelFormat::Yuv420P.frame_size_bytes(4, 4), Some(24));
+    /// // 4:4:0 at 6×5: 30 luma + 2 × (6 × 3) chroma bytes.
+    /// assert_eq!(PixelFormat::Yuv440P.frame_size_bytes(6, 5), Some(66));
+    /// // Packed float RGBA: 16 bytes per pixel.
+    /// assert_eq!(PixelFormat::RgbaF32Le.frame_size_bytes(3, 3), Some(144));
+    /// ```
+    pub fn frame_size_bytes(&self, width: u32, height: u32) -> Option<usize> {
+        let mut total = 0usize;
+        for plane in 0..self.plane_count() {
+            total = total.checked_add(self.plane_size_bytes(plane, width, height)?)?;
+        }
+        Some(total)
     }
 }
 
@@ -1023,6 +1376,15 @@ mod tests {
         assert_eq!(PixelFormat::Gbrap8 as u16, 58);
         assert_eq!(PixelFormat::Ya16Le as u16, 59);
         assert_eq!(PixelFormat::CmykInverted as u16, 60);
+        assert_eq!(PixelFormat::Yuv440P as u16, 61);
+        assert_eq!(PixelFormat::Yuv440P10Le as u16, 62);
+        assert_eq!(PixelFormat::Yuv440P12Le as u16, 63);
+        assert_eq!(PixelFormat::Yuv440P16Le as u16, 64);
+        assert_eq!(PixelFormat::GrayF32Le as u16, 65);
+        assert_eq!(PixelFormat::RgbF32Le as u16, 66);
+        assert_eq!(PixelFormat::RgbaF32Le as u16, 67);
+        assert_eq!(PixelFormat::GbrpF32Le as u16, 68);
+        assert_eq!(PixelFormat::GbrapF32Le as u16, 69);
     }
 
     #[test]
@@ -1600,6 +1962,433 @@ mod tests {
         assert_eq!(
             PixelFormat::Yuva420P16Le.bits_per_pixel_approx(),
             PixelFormat::Yuv420P16Le.bits_per_pixel_approx() + 16
+        );
+    }
+
+    /// Every `PixelFormat` variant, in discriminant order. Extend this
+    /// list whenever a variant is appended — the consistency tests
+    /// below sweep it.
+    const ALL_PIXEL_FORMATS: [PixelFormat; 70] = [
+        PixelFormat::Yuv420P,
+        PixelFormat::Yuv422P,
+        PixelFormat::Yuv444P,
+        PixelFormat::Rgb24,
+        PixelFormat::Rgba,
+        PixelFormat::Gray8,
+        PixelFormat::Pal8,
+        PixelFormat::Bgr24,
+        PixelFormat::Bgra,
+        PixelFormat::Argb,
+        PixelFormat::Abgr,
+        PixelFormat::Rgb48Le,
+        PixelFormat::Rgba64Le,
+        PixelFormat::Gray16Le,
+        PixelFormat::Gray10Le,
+        PixelFormat::Gray12Le,
+        PixelFormat::Yuv420P10Le,
+        PixelFormat::Yuv422P10Le,
+        PixelFormat::Yuv444P10Le,
+        PixelFormat::Yuv420P12Le,
+        PixelFormat::Yuv422P12Le,
+        PixelFormat::Yuv444P12Le,
+        PixelFormat::YuvJ420P,
+        PixelFormat::YuvJ422P,
+        PixelFormat::YuvJ444P,
+        PixelFormat::Nv12,
+        PixelFormat::Nv21,
+        PixelFormat::Ya8,
+        PixelFormat::Yuva420P,
+        PixelFormat::MonoBlack,
+        PixelFormat::MonoWhite,
+        PixelFormat::Yuyv422,
+        PixelFormat::Uyvy422,
+        PixelFormat::Cmyk,
+        PixelFormat::Yuv411P,
+        PixelFormat::Gbrp10Le,
+        PixelFormat::Gbrap10Le,
+        PixelFormat::Gbrp12Le,
+        PixelFormat::Gbrap12Le,
+        PixelFormat::Gbrp14Le,
+        PixelFormat::Gbrap14Le,
+        PixelFormat::Yuv420P16Le,
+        PixelFormat::Yuv422P16Le,
+        PixelFormat::Yuv444P16Le,
+        PixelFormat::Yuva422P,
+        PixelFormat::Yuva444P,
+        PixelFormat::Yuva422P10Le,
+        PixelFormat::Yuva422P12Le,
+        PixelFormat::Yuva444P10Le,
+        PixelFormat::Yuva444P12Le,
+        PixelFormat::Yuva422P16Le,
+        PixelFormat::Yuva444P16Le,
+        PixelFormat::Gbrp8,
+        PixelFormat::Gbrp16Le,
+        PixelFormat::Gbrap16Le,
+        PixelFormat::Yuva420P10Le,
+        PixelFormat::Yuva420P12Le,
+        PixelFormat::Yuva420P16Le,
+        PixelFormat::Gbrap8,
+        PixelFormat::Ya16Le,
+        PixelFormat::CmykInverted,
+        PixelFormat::Yuv440P,
+        PixelFormat::Yuv440P10Le,
+        PixelFormat::Yuv440P12Le,
+        PixelFormat::Yuv440P16Le,
+        PixelFormat::GrayF32Le,
+        PixelFormat::RgbF32Le,
+        PixelFormat::RgbaF32Le,
+        PixelFormat::GbrpF32Le,
+        PixelFormat::GbrapF32Le,
+    ];
+
+    #[test]
+    fn all_pixel_formats_list_is_complete_and_distinct() {
+        // The list is discriminant-ordered and dense: 0..70 with no
+        // gaps and no duplicates. A newly appended variant that isn't
+        // added to the list will break the length or density check.
+        let mut seen = std::collections::HashSet::new();
+        for fmt in ALL_PIXEL_FORMATS {
+            assert!(seen.insert(fmt as u16), "duplicate discriminant: {fmt:?}");
+        }
+        for d in 0..ALL_PIXEL_FORMATS.len() as u16 {
+            assert!(seen.contains(&d), "discriminant {d} missing from list");
+        }
+    }
+
+    #[test]
+    fn yuv440_family_metadata() {
+        // The whole 4:4:0 ladder shares one shape: planar, 3 planes,
+        // no alpha, no palette, full-width half-height chroma.
+        for fmt in [
+            PixelFormat::Yuv440P,
+            PixelFormat::Yuv440P10Le,
+            PixelFormat::Yuv440P12Le,
+            PixelFormat::Yuv440P16Le,
+        ] {
+            assert!(fmt.is_planar(), "{fmt:?} must be planar");
+            assert_eq!(fmt.plane_count(), 3, "{fmt:?} must have 3 planes");
+            assert!(!fmt.has_alpha(), "{fmt:?} must not carry alpha");
+            assert!(!fmt.is_palette(), "{fmt:?} must not be palette");
+            assert!(!fmt.is_float(), "{fmt:?} must not be float");
+            assert_eq!(
+                fmt.chroma_subsampling(),
+                Some((0, 1)),
+                "{fmt:?} must be full-width, half-height chroma"
+            );
+        }
+    }
+
+    #[test]
+    fn yuv440_bits_per_pixel_approx() {
+        // 4:4:0 packs the same samples-per-pixel as 4:2:2 at every
+        // depth (2 samples/pixel), so the estimator numbers coincide.
+        assert_eq!(
+            PixelFormat::Yuv440P.bits_per_pixel_approx(),
+            PixelFormat::Yuv422P.bits_per_pixel_approx()
+        );
+        assert_eq!(PixelFormat::Yuv440P.bits_per_pixel_approx(), 16);
+        for (f440, f422) in [
+            (PixelFormat::Yuv440P10Le, PixelFormat::Yuv422P10Le),
+            (PixelFormat::Yuv440P12Le, PixelFormat::Yuv422P12Le),
+            (PixelFormat::Yuv440P16Le, PixelFormat::Yuv422P16Le),
+        ] {
+            assert_eq!(
+                f440.bits_per_pixel_approx(),
+                f422.bits_per_pixel_approx(),
+                "{f440:?}"
+            );
+            assert_eq!(f440.bits_per_pixel_approx(), 32, "{f440:?}");
+        }
+    }
+
+    #[test]
+    fn yuv440_plane_geometry() {
+        // Even sizes: chroma keeps the width, halves the height.
+        assert_eq!(
+            PixelFormat::Yuv440P.plane_dimensions(0, 640, 480),
+            Some((640, 480))
+        );
+        assert_eq!(
+            PixelFormat::Yuv440P.plane_dimensions(1, 640, 480),
+            Some((640, 240))
+        );
+        assert_eq!(
+            PixelFormat::Yuv440P.plane_dimensions(2, 640, 480),
+            Some((640, 240))
+        );
+        // Odd height rounds up; odd width is untouched (ssx = 0).
+        for fmt in [
+            PixelFormat::Yuv440P,
+            PixelFormat::Yuv440P10Le,
+            PixelFormat::Yuv440P12Le,
+            PixelFormat::Yuv440P16Le,
+        ] {
+            assert_eq!(fmt.plane_dimensions(0, 7, 5), Some((7, 5)), "{fmt:?}");
+            assert_eq!(fmt.plane_dimensions(1, 7, 5), Some((7, 3)), "{fmt:?}");
+            assert_eq!(fmt.plane_dimensions(2, 7, 5), Some((7, 3)), "{fmt:?}");
+            assert_eq!(fmt.plane_dimensions(3, 7, 5), None, "{fmt:?}");
+        }
+        // Degenerate 1-row picture: the chroma plane still has a row.
+        assert_eq!(PixelFormat::Yuv440P.plane_dimensions(1, 3, 1), Some((3, 1)));
+    }
+
+    #[test]
+    fn yuv440_sizing_round_trips() {
+        // 6×5 8-bit: luma 6×5 = 30, each chroma 6×ceil(5/2) = 18.
+        assert_eq!(PixelFormat::Yuv440P.plane_size_bytes(0, 6, 5), Some(30));
+        assert_eq!(PixelFormat::Yuv440P.plane_size_bytes(1, 6, 5), Some(18));
+        assert_eq!(PixelFormat::Yuv440P.plane_size_bytes(2, 6, 5), Some(18));
+        assert_eq!(PixelFormat::Yuv440P.frame_size_bytes(6, 5), Some(66));
+        // 7×5: 35 + 21 + 21.
+        assert_eq!(PixelFormat::Yuv440P.frame_size_bytes(7, 5), Some(77));
+        // Deep variants store 16-bit words: exactly double at every
+        // depth (row bytes = width × 2 regardless of valid bits).
+        for fmt in [
+            PixelFormat::Yuv440P10Le,
+            PixelFormat::Yuv440P12Le,
+            PixelFormat::Yuv440P16Le,
+        ] {
+            assert_eq!(fmt.plane_row_bytes(0, 7), Some(14), "{fmt:?}");
+            assert_eq!(fmt.plane_row_bytes(1, 7), Some(14), "{fmt:?}");
+            assert_eq!(fmt.frame_size_bytes(7, 5), Some(154), "{fmt:?}");
+        }
+    }
+
+    #[test]
+    fn float_family_metadata() {
+        // Packed trio: single plane, not planar.
+        for fmt in [
+            PixelFormat::GrayF32Le,
+            PixelFormat::RgbF32Le,
+            PixelFormat::RgbaF32Le,
+        ] {
+            assert!(!fmt.is_planar(), "{fmt:?}");
+            assert_eq!(fmt.plane_count(), 1, "{fmt:?}");
+        }
+        // Planar pair: GBR(A) shape.
+        assert!(PixelFormat::GbrpF32Le.is_planar());
+        assert_eq!(PixelFormat::GbrpF32Le.plane_count(), 3);
+        assert!(PixelFormat::GbrapF32Le.is_planar());
+        assert_eq!(PixelFormat::GbrapF32Le.plane_count(), 4);
+        // Alpha only on the RGBA/GBRA members.
+        assert!(!PixelFormat::GrayF32Le.has_alpha());
+        assert!(!PixelFormat::RgbF32Le.has_alpha());
+        assert!(PixelFormat::RgbaF32Le.has_alpha());
+        assert!(!PixelFormat::GbrpF32Le.has_alpha());
+        assert!(PixelFormat::GbrapF32Le.has_alpha());
+        // The whole family is float, non-palette, and has no chroma
+        // grid.
+        for fmt in [
+            PixelFormat::GrayF32Le,
+            PixelFormat::RgbF32Le,
+            PixelFormat::RgbaF32Le,
+            PixelFormat::GbrpF32Le,
+            PixelFormat::GbrapF32Le,
+        ] {
+            assert!(fmt.is_float(), "{fmt:?} must be float");
+            assert!(!fmt.is_palette(), "{fmt:?}");
+            assert_eq!(fmt.chroma_subsampling(), None, "{fmt:?}");
+        }
+    }
+
+    #[test]
+    fn is_float_false_for_integer_formats() {
+        for fmt in ALL_PIXEL_FORMATS {
+            let expect = matches!(
+                fmt,
+                PixelFormat::GrayF32Le
+                    | PixelFormat::RgbF32Le
+                    | PixelFormat::RgbaF32Le
+                    | PixelFormat::GbrpF32Le
+                    | PixelFormat::GbrapF32Le
+            );
+            assert_eq!(fmt.is_float(), expect, "{fmt:?}");
+        }
+    }
+
+    #[test]
+    fn float_family_bits_per_pixel_and_sizing() {
+        // Packed bits equal storage bits: every sample is a full
+        // binary32 word.
+        assert_eq!(PixelFormat::GrayF32Le.bits_per_pixel_approx(), 32);
+        assert_eq!(PixelFormat::RgbF32Le.bits_per_pixel_approx(), 96);
+        assert_eq!(PixelFormat::RgbaF32Le.bits_per_pixel_approx(), 128);
+        assert_eq!(PixelFormat::GbrpF32Le.bits_per_pixel_approx(), 96);
+        assert_eq!(PixelFormat::GbrapF32Le.bits_per_pixel_approx(), 128);
+        // Packed row/frame sizes.
+        assert_eq!(PixelFormat::GrayF32Le.plane_row_bytes(0, 3), Some(12));
+        assert_eq!(PixelFormat::GrayF32Le.frame_size_bytes(5, 3), Some(60));
+        assert_eq!(PixelFormat::RgbF32Le.plane_row_bytes(0, 7), Some(84));
+        assert_eq!(PixelFormat::RgbaF32Le.frame_size_bytes(3, 3), Some(144));
+        // Planar float: 4 bytes per sample on every plane; the packed
+        // and planar layouts of the same component set cost the same.
+        assert_eq!(PixelFormat::GbrpF32Le.plane_row_bytes(1, 7), Some(28));
+        assert_eq!(
+            PixelFormat::GbrpF32Le.frame_size_bytes(7, 5),
+            PixelFormat::RgbF32Le.frame_size_bytes(7, 5)
+        );
+        assert_eq!(
+            PixelFormat::GbrapF32Le.frame_size_bytes(7, 5),
+            PixelFormat::RgbaF32Le.frame_size_bytes(7, 5)
+        );
+        // All planes of planar float GBR(A) are full resolution.
+        for plane in 0..4 {
+            assert_eq!(
+                PixelFormat::GbrapF32Le.plane_dimensions(plane, 7, 5),
+                Some((7, 5))
+            );
+        }
+    }
+
+    #[test]
+    fn chroma_subsampling_table() {
+        use PixelFormat::*;
+        // One representative per sampling class plus the full new
+        // family; the wildcard class returns None.
+        assert_eq!(Yuv420P.chroma_subsampling(), Some((1, 1)));
+        assert_eq!(Nv12.chroma_subsampling(), Some((1, 1)));
+        assert_eq!(Yuva420P16Le.chroma_subsampling(), Some((1, 1)));
+        assert_eq!(Yuv422P.chroma_subsampling(), Some((1, 0)));
+        assert_eq!(Yuyv422.chroma_subsampling(), Some((1, 0)));
+        assert_eq!(Uyvy422.chroma_subsampling(), Some((1, 0)));
+        assert_eq!(Yuv444P.chroma_subsampling(), Some((0, 0)));
+        assert_eq!(Yuva444P12Le.chroma_subsampling(), Some((0, 0)));
+        assert_eq!(Yuv411P.chroma_subsampling(), Some((2, 0)));
+        assert_eq!(Yuv440P.chroma_subsampling(), Some((0, 1)));
+        assert_eq!(Yuv440P16Le.chroma_subsampling(), Some((0, 1)));
+        for fmt in [
+            Gray8,
+            Gray16Le,
+            Ya8,
+            Ya16Le,
+            Pal8,
+            MonoBlack,
+            MonoWhite,
+            Rgb24,
+            Rgba,
+            Rgb48Le,
+            Rgba64Le,
+            Cmyk,
+            CmykInverted,
+            Gbrp8,
+            Gbrap16Le,
+            GrayF32Le,
+            RgbaF32Le,
+            GbrapF32Le,
+        ] {
+            assert_eq!(fmt.chroma_subsampling(), None, "{fmt:?}");
+        }
+    }
+
+    #[test]
+    fn plane_dimensions_odd_sizes_across_samplings() {
+        use PixelFormat::*;
+        // 4:2:0 — both axes ceil-halved.
+        assert_eq!(Yuv420P.plane_dimensions(1, 7, 5), Some((4, 3)));
+        // 4:2:2 — width ceil-halved, height untouched.
+        assert_eq!(Yuv422P.plane_dimensions(2, 7, 5), Some((4, 5)));
+        // 4:1:1 — width ceil-quartered.
+        assert_eq!(Yuv411P.plane_dimensions(1, 7, 5), Some((2, 5)));
+        assert_eq!(Yuv411P.plane_dimensions(1, 9, 5), Some((3, 5)));
+        // 4:4:4 — untouched.
+        assert_eq!(Yuv444P.plane_dimensions(1, 7, 5), Some((7, 5)));
+        // Semi-planar chroma positions.
+        assert_eq!(Nv12.plane_dimensions(1, 7, 5), Some((4, 3)));
+        assert_eq!(Nv21.plane_dimensions(1, 7, 5), Some((4, 3)));
+        // Alpha planes are never subsampled.
+        assert_eq!(Yuva420P.plane_dimensions(3, 7, 5), Some((7, 5)));
+        assert_eq!(Yuva422P16Le.plane_dimensions(3, 7, 5), Some((7, 5)));
+        // Planar RGB planes are never subsampled.
+        for plane in 0..3 {
+            assert_eq!(Gbrp12Le.plane_dimensions(plane, 7, 5), Some((7, 5)));
+        }
+        // Out-of-range planes.
+        assert_eq!(Rgb24.plane_dimensions(1, 8, 8), None);
+        assert_eq!(Yuv420P.plane_dimensions(3, 8, 8), None);
+        assert_eq!(Yuva420P.plane_dimensions(4, 8, 8), None);
+        // Zero-sized pictures collapse every plane to zero.
+        assert_eq!(Yuv440P.plane_dimensions(1, 0, 0), Some((0, 0)));
+    }
+
+    #[test]
+    fn plane_row_bytes_conventions() {
+        use PixelFormat::*;
+        // Bit-packed mono: ceil(width / 8) with a ragged tail byte.
+        assert_eq!(MonoBlack.plane_row_bytes(0, 13), Some(2));
+        assert_eq!(MonoWhite.plane_row_bytes(0, 16), Some(2));
+        assert_eq!(MonoBlack.plane_row_bytes(0, 17), Some(3));
+        // Packed 4:2:2: 4-byte macropixels, odd width rounds up.
+        assert_eq!(Yuyv422.plane_row_bytes(0, 6), Some(12));
+        assert_eq!(Uyvy422.plane_row_bytes(0, 7), Some(16));
+        // Semi-planar chroma: 2 bytes per position.
+        assert_eq!(Nv12.plane_row_bytes(0, 7), Some(7));
+        assert_eq!(Nv12.plane_row_bytes(1, 7), Some(8));
+        // Deep planar planes: 2 bytes per sample regardless of the
+        // number of valid bits in the word.
+        assert_eq!(Yuv420P10Le.plane_row_bytes(1, 7), Some(8));
+        assert_eq!(Gbrap14Le.plane_row_bytes(3, 5), Some(10));
+        // Packed pixel costs.
+        assert_eq!(Rgb24.plane_row_bytes(0, 5), Some(15));
+        assert_eq!(Rgb48Le.plane_row_bytes(0, 2), Some(12));
+        assert_eq!(Rgba64Le.plane_row_bytes(0, 2), Some(16));
+        assert_eq!(Ya16Le.plane_row_bytes(0, 3), Some(12));
+        assert_eq!(Cmyk.plane_row_bytes(0, 3), Some(12));
+        // Out-of-range plane.
+        assert_eq!(Gray8.plane_row_bytes(1, 8), None);
+    }
+
+    #[test]
+    fn frame_size_examples() {
+        use PixelFormat::*;
+        assert_eq!(Yuv420P.frame_size_bytes(4, 4), Some(24));
+        assert_eq!(Nv12.frame_size_bytes(7, 5), Some(59)); // 35 + 4×3×2
+        assert_eq!(Yuyv422.frame_size_bytes(7, 2), Some(32));
+        assert_eq!(MonoBlack.frame_size_bytes(13, 3), Some(6));
+        assert_eq!(Pal8.frame_size_bytes(5, 4), Some(20));
+        assert_eq!(Ya16Le.frame_size_bytes(3, 3), Some(36));
+        assert_eq!(Yuva444P16Le.frame_size_bytes(3, 3), Some(72));
+    }
+
+    #[test]
+    fn frame_size_is_sum_of_planes_for_every_format() {
+        for fmt in ALL_PIXEL_FORMATS {
+            for (w, h) in [(0, 0), (1, 1), (2, 2), (7, 5), (16, 16), (13, 1), (1, 13)] {
+                let total = fmt
+                    .frame_size_bytes(w, h)
+                    .unwrap_or_else(|| panic!("{fmt:?} {w}x{h} must size"));
+                let sum: usize = (0..fmt.plane_count())
+                    .map(|p| fmt.plane_size_bytes(p, w, h).unwrap())
+                    .sum();
+                assert_eq!(total, sum, "{fmt:?} {w}x{h}");
+                // Plane 0 is always the full pixel grid.
+                assert_eq!(fmt.plane_dimensions(0, w, h), Some((w, h)), "{fmt:?}");
+                // The plane table ends exactly at plane_count.
+                assert_eq!(fmt.plane_dimensions(fmt.plane_count(), w, h), None);
+                // Tightly-packed storage can never be smaller than the
+                // packed-bits density estimate.
+                let storage_bits = total as u128 * 8;
+                let density_bits = w as u128 * h as u128 * fmt.bits_per_pixel_approx() as u128;
+                assert!(
+                    storage_bits >= density_bits,
+                    "{fmt:?} {w}x{h}: storage {storage_bits} < density {density_bits}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sizing_overflow_returns_none() {
+        assert_eq!(
+            PixelFormat::Rgba64Le.frame_size_bytes(u32::MAX, u32::MAX),
+            None
+        );
+        assert_eq!(
+            PixelFormat::RgbaF32Le.frame_size_bytes(u32::MAX, u32::MAX),
+            None
+        );
+        assert_eq!(
+            PixelFormat::Yuv440P16Le.plane_size_bytes(0, u32::MAX, u32::MAX),
+            None
         );
     }
 }

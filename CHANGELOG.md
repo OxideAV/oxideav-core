@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Two pixel-format families from consumer asks, landed additively
+  (pinned discriminants, append-only):
+  - The 4:4:0 planar YUV family — `Yuv440P` (61), `Yuv440P10Le` (62),
+    `Yuv440P12Le` (63), `Yuv440P16Le` (64): full-width, half-height
+    chroma (subsampling shifts ssx = 0, ssy = 1), with the same
+    8/10/12/16 depth ladder as the other planar YUV samplings. Asked
+    by a video decoder whose bitstream sampling flags allow
+    vertical-only chroma decimation.
+  - The scene-referred 32-bit float family — `GrayF32Le` (65),
+    `RgbF32Le` (66), `RgbaF32Le` (67), `GbrpF32Le` (68), `GbrapF32Le`
+    (69): IEEE 754 binary32 little-endian samples carrying linear
+    light with no integer full-scale (1.0 = nominal diffuse white).
+    Asked by an HDR image decoder whose native component type is
+    floating point.
+- `PixelFormat` plane-geometry helpers, defined for every variant:
+  `is_float()`, `chroma_subsampling()` (log2 `(ssx, ssy)` shifts per
+  sampling class), `plane_dimensions()` (per-plane sample grids with
+  ceiling division on subsampled axes), and the tightly-packed sizing
+  trio `plane_row_bytes()` / `plane_size_bytes()` /
+  `frame_size_bytes()` (checked arithmetic — `None` on out-of-range
+  plane or `usize` overflow).
+
 ## [0.1.34](https://github.com/OxideAV/oxideav-core/compare/v0.1.33...v0.1.34) - 2026-07-27
 
 ### Other
