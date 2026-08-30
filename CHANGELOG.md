@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.35](https://github.com/OxideAV/oxideav-core/compare/v0.1.34...v0.1.35) - 2026-08-20
+
+### Other
+
+- 4:4:0 YUV ladder + scene-referred float family + plane-geometry helpers
+
 ### Added
 
 - Two pixel-format families from consumer asks, landed additively
