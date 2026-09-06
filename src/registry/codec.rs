@@ -504,6 +504,10 @@ pub struct CodecRegistry {
     /// entry here. `make_decoder` / `make_encoder` walk this list in
     /// preference order.
     impls: HashMap<CodecId, Vec<CodecImplementation>>,
+    /// Codec ids in the order their first implementation was
+    /// registered — drives every id-level enumeration so listings are
+    /// stable across processes.
+    impl_order: Vec<CodecId>,
     /// Append-only list of every registration — the `tag_index` stores
     /// offsets into this vector.
     registrations: Vec<RegistrationRecord>,
@@ -525,6 +529,9 @@ struct RegistrationRecord {
     probe: Option<ProbeFn>,
     /// Claim tie-break rank copied from [`CodecInfo::resolution_priority`].
     priority: i32,
+    /// Tags claimed by this registration, in declaration order — the
+    /// source of [`CodecRegistry::all_tag_registrations`]'s ordering.
+    tags: Vec<CodecTag>,
 }
 
 /// One ranked entry from [`CodecRegistry::resolve_tag_candidates`].
@@ -625,29 +632,34 @@ impl CodecRegistry {
         // claims to a codec that was already registered with factories —
         // shouldn't pollute the impl list.
         if decoder_factory.is_some() || encoder_factory.is_some() {
-            self.impls
-                .entry(id.clone())
-                .or_default()
-                .push(CodecImplementation {
-                    caps,
-                    make_decoder: decoder_factory,
-                    make_encoder: encoder_factory,
-                    encoder_options_schema,
-                    decoder_options_schema,
-                    engine_id,
-                    engine_probe,
-                });
+            let slot = self.impls.entry(id.clone()).or_default();
+            if slot.is_empty() {
+                self.impl_order.push(id.clone());
+            }
+            slot.push(CodecImplementation {
+                caps,
+                make_decoder: decoder_factory,
+                make_encoder: encoder_factory,
+                encoder_options_schema,
+                decoder_options_schema,
+                engine_id,
+                engine_probe,
+            });
         }
 
         let record_idx = self.registrations.len();
+        for tag in &tags {
+            self.tag_index
+                .entry(tag.clone())
+                .or_default()
+                .push(record_idx);
+        }
         self.registrations.push(RegistrationRecord {
             id: id.clone(),
             probe,
             priority: resolution_priority,
+            tags,
         });
-        for tag in tags {
-            self.tag_index.entry(tag).or_default().push(record_idx);
-        }
         for magic in payload_magics {
             // A zero-length prefix would match every stream while
             // carrying no evidence — drop it here so resolution never
@@ -759,20 +771,16 @@ impl CodecRegistry {
         factory(params)
     }
 
-    /// Iterate codec ids that have at least one decoder implementation.
+    /// Iterate codec ids that have at least one decoder implementation,
+    /// in the order each id's first implementation was registered.
     pub fn decoder_ids(&self) -> impl Iterator<Item = &CodecId> {
-        self.impls
-            .iter()
-            .filter(|(_, v)| v.iter().any(|i| i.make_decoder.is_some()))
-            .map(|(id, _)| id)
+        self.impl_order.iter().filter(|id| self.has_decoder(id))
     }
 
-    /// Iterate codec ids that have at least one encoder implementation.
+    /// Iterate codec ids that have at least one encoder implementation,
+    /// in the order each id's first implementation was registered.
     pub fn encoder_ids(&self) -> impl Iterator<Item = &CodecId> {
-        self.impls
-            .iter()
-            .filter(|(_, v)| v.iter().any(|i| i.make_encoder.is_some()))
-            .map(|(id, _)| id)
+        self.impl_order.iter().filter(|id| self.has_encoder(id))
     }
 
     /// All registered implementations of a given codec id.
@@ -801,20 +809,23 @@ impl CodecRegistry {
     }
 
     /// Iterator over every (codec_id, impl) pair — useful for `oxideav list`
-    /// to show capability flags per implementation.
+    /// to show capability flags per implementation. Ids come in the
+    /// order their first implementation was registered; implementations
+    /// of one id in their own registration order.
     pub fn all_implementations(&self) -> impl Iterator<Item = (&CodecId, &CodecImplementation)> {
-        self.impls
+        self.impl_order
             .iter()
-            .flat_map(|(id, v)| v.iter().map(move |i| (id, i)))
+            .flat_map(move |id| self.implementations(id).iter().map(move |i| (id, i)))
     }
 
     /// Iterator over every `(tag, codec_id)` pair currently registered —
     /// used by `oxideav tags` debug output and by tests that want to
-    /// walk the tag surface.
+    /// walk the tag surface. Registration order, then each
+    /// registration's tag declaration order.
     pub fn all_tag_registrations(&self) -> impl Iterator<Item = (&CodecTag, &CodecId)> {
-        self.tag_index.iter().flat_map(move |(tag, idxs)| {
-            idxs.iter().map(move |&i| (tag, &self.registrations[i].id))
-        })
+        self.registrations
+            .iter()
+            .flat_map(|rec| rec.tags.iter().map(move |tag| (tag, &rec.id)))
     }
 
     /// Inherent form of tag resolution that returns a reference.
@@ -1564,6 +1575,56 @@ mod resolution_order_tests {
         // Nothing matches: empty list, None.
         assert!(reg.resolve_payload_magic_candidates(b"other").is_empty());
         assert!(reg.resolve_payload_magic_ref(b"other").is_none());
+    }
+
+    fn dec(_p: &crate::CodecParameters) -> crate::Result<Box<dyn Decoder>> {
+        Err(Error::unsupported("dummy"))
+    }
+    fn enc(_p: &crate::CodecParameters) -> crate::Result<Box<dyn Encoder>> {
+        Err(Error::unsupported("dummy"))
+    }
+
+    #[test]
+    fn enumerations_follow_registration_order() {
+        for _ in 0..200 {
+            let mut reg = CodecRegistry::new();
+            reg.register(
+                info("zeta")
+                    .decoder(dec)
+                    .tags([CodecTag::fourcc(b"ZET1"), CodecTag::fourcc(b"ZET2")]),
+            );
+            reg.register(info("alpha").encoder(enc).tag(CodecTag::fourcc(b"ALPH")));
+            reg.register(info("omicron").decoder(dec).encoder(enc));
+            // Second impl of an existing id does not move it.
+            reg.register(info("zeta").encoder(enc).tag(CodecTag::fourcc(b"ZET3")));
+            // Tag-only registration: no impl, but its tags are listed.
+            reg.register(info("beta").tag(CodecTag::fourcc(b"BETA")));
+
+            let ids: Vec<&str> = reg
+                .all_implementations()
+                .map(|(id, _)| id.as_str())
+                .collect();
+            assert_eq!(ids, vec!["zeta", "zeta", "alpha", "omicron"]);
+            let dec_ids: Vec<&str> = reg.decoder_ids().map(|i| i.as_str()).collect();
+            assert_eq!(dec_ids, vec!["zeta", "omicron"]);
+            let enc_ids: Vec<&str> = reg.encoder_ids().map(|i| i.as_str()).collect();
+            assert_eq!(enc_ids, vec!["zeta", "alpha", "omicron"]);
+            let tags: Vec<(String, &str)> = reg
+                .all_tag_registrations()
+                .map(|(t, id)| (format!("{t:?}"), id.as_str()))
+                .collect();
+            let want: Vec<(String, &str)> = [
+                (CodecTag::fourcc(b"ZET1"), "zeta"),
+                (CodecTag::fourcc(b"ZET2"), "zeta"),
+                (CodecTag::fourcc(b"ALPH"), "alpha"),
+                (CodecTag::fourcc(b"ZET3"), "zeta"),
+                (CodecTag::fourcc(b"BETA"), "beta"),
+            ]
+            .into_iter()
+            .map(|(t, id)| (format!("{t:?}"), id))
+            .collect();
+            assert_eq!(tags, want);
+        }
     }
 
     #[test]

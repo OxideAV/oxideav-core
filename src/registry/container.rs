@@ -230,8 +230,14 @@ impl<T: Write + Seek + Send> WriteSeek for T {}
 /// input auto-detection.
 #[derive(Default)]
 pub struct ContainerRegistry {
-    demuxers: HashMap<String, OpenDemuxerFn>,
-    muxers: HashMap<String, OpenMuxerFn>,
+    /// Demuxer factories in registration order; names are unique
+    /// (re-registration replaces in place). Linear lookup — a registry
+    /// holds on the order of a hundred names and `open_demuxer` runs
+    /// once per input, so a hash index would buy nothing but an
+    /// unspecified enumeration order.
+    demuxers: Vec<(String, OpenDemuxerFn)>,
+    /// Muxer factories, same shape as `demuxers`.
+    muxers: Vec<(String, OpenMuxerFn)>,
     /// Lowercase file extension → every claim made on it, in
     /// registration order (e.g. "wav" → [wav]). Resolution picks the
     /// lowest priority number, then the most recent claim.
@@ -254,13 +260,23 @@ impl ContainerRegistry {
     }
 
     /// Register a demuxer factory under a container format name.
+    /// Re-registering a name replaces its factory in place; the name
+    /// keeps its original position in
+    /// [`demuxer_names`](Self::demuxer_names).
     pub fn register_demuxer(&mut self, name: &str, open: OpenDemuxerFn) {
-        self.demuxers.insert(name.to_owned(), open);
+        match self.demuxers.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => slot.1 = open,
+            None => self.demuxers.push((name.to_owned(), open)),
+        }
     }
 
-    /// Register a muxer factory under a container format name.
+    /// Register a muxer factory under a container format name. Same
+    /// replacement contract as [`register_demuxer`](Self::register_demuxer).
     pub fn register_muxer(&mut self, name: &str, open: OpenMuxerFn) {
-        self.muxers.insert(name.to_owned(), open);
+        match self.muxers.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => slot.1 = open,
+            None => self.muxers.push((name.to_owned(), open)),
+        }
     }
 
     /// Map a file extension (case-insensitive) to a registered
@@ -421,14 +437,16 @@ impl ContainerRegistry {
         out
     }
 
-    /// Iterate the registered demuxer format names (arbitrary order).
+    /// Iterate the registered demuxer format names in registration
+    /// order (stable across processes — suitable for listings and
+    /// audits without a sort).
     pub fn demuxer_names(&self) -> impl Iterator<Item = &str> {
-        self.demuxers.keys().map(|s| s.as_str())
+        self.demuxers.iter().map(|(n, _)| n.as_str())
     }
 
-    /// Iterate the registered muxer format names (arbitrary order).
+    /// Iterate the registered muxer format names in registration order.
     pub fn muxer_names(&self) -> impl Iterator<Item = &str> {
-        self.muxers.keys().map(|s| s.as_str())
+        self.muxers.iter().map(|(n, _)| n.as_str())
     }
 
     /// Open a demuxer explicitly by format name. The `codecs` resolver
@@ -444,7 +462,9 @@ impl ContainerRegistry {
     ) -> Result<Box<dyn Demuxer>> {
         let open = self
             .demuxers
-            .get(name)
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, f)| *f)
             .ok_or_else(|| Error::FormatNotFound(name.to_owned()))?;
         open(input, codecs)
     }
@@ -458,7 +478,9 @@ impl ContainerRegistry {
     ) -> Result<Box<dyn Muxer>> {
         let open = self
             .muxers
-            .get(name)
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, f)| *f)
             .ok_or_else(|| Error::FormatNotFound(name.to_owned()))?;
         open(output, streams)
     }
@@ -793,6 +815,59 @@ mod tests {
         let b = reg.extension_candidates("b");
         assert_eq!(a.iter().map(|c| c.order).collect::<Vec<_>>(), vec![2, 0]);
         assert_eq!(b[0].order, 1);
+    }
+
+    fn open_dummy(
+        _input: Box<dyn ReadSeek>,
+        _codecs: &dyn CodecResolver,
+    ) -> Result<Box<dyn Demuxer>> {
+        Ok(Box::new(DummyDemuxer))
+    }
+
+    fn open_dummy_mux(
+        _output: Box<dyn WriteSeek>,
+        _streams: &[StreamInfo],
+    ) -> Result<Box<dyn Muxer>> {
+        Err(Error::unsupported("dummy muxer"))
+    }
+
+    #[test]
+    fn name_listings_follow_registration_order_and_replace_in_place() {
+        const ORDER: [&str; 5] = ["zeta", "alpha", "omicron", "beta", "kappa"];
+        for _ in 0..200 {
+            let mut reg = ContainerRegistry::new();
+            for n in ORDER {
+                reg.register_demuxer(n, open_dummy);
+                reg.register_muxer(n, open_dummy_mux);
+            }
+            // Re-registering keeps the slot.
+            reg.register_demuxer("alpha", open_dummy);
+            reg.register_muxer("omicron", open_dummy_mux);
+            assert_eq!(reg.demuxer_names().collect::<Vec<_>>(), ORDER.to_vec());
+            assert_eq!(reg.muxer_names().collect::<Vec<_>>(), ORDER.to_vec());
+        }
+        let mut reg = ContainerRegistry::new();
+        reg.register_demuxer("only", open_dummy);
+        let d = reg
+            .open_demuxer(
+                "only",
+                Box::new(std::io::Cursor::new(Vec::new())),
+                &crate::NullCodecResolver,
+            )
+            .unwrap();
+        assert_eq!(d.format_name(), "dummy");
+        assert!(matches!(
+            reg.open_demuxer(
+                "missing",
+                Box::new(std::io::Cursor::new(Vec::new())),
+                &crate::NullCodecResolver,
+            ),
+            Err(Error::FormatNotFound(_))
+        ));
+        assert!(matches!(
+            reg.open_muxer("missing", Box::new(std::io::Cursor::new(Vec::new())), &[]),
+            Err(Error::FormatNotFound(_))
+        ));
     }
 
     #[test]

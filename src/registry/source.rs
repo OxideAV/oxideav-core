@@ -226,6 +226,10 @@ enum OpenerEntry {
 #[derive(Default)]
 pub struct SourceRegistry {
     schemes: HashMap<String, OpenerEntry>,
+    /// Schemes in first-registration order — drives
+    /// [`schemes`](Self::schemes) so listings are stable across
+    /// processes.
+    order: Vec<String>,
 }
 
 impl SourceRegistry {
@@ -240,32 +244,37 @@ impl SourceRegistry {
     /// normalised to ASCII lowercase. Replaces any prior registration
     /// (including registrations of other opener kinds).
     pub fn register_bytes(&mut self, scheme: &str, opener: OpenBytesFn) {
-        self.schemes
-            .insert(scheme.to_ascii_lowercase(), OpenerEntry::Bytes(opener));
+        self.insert(scheme, OpenerEntry::Bytes(opener));
+    }
+
+    /// Shared insert: lowercase the scheme, remember first-seen order,
+    /// replace any prior entry.
+    fn insert(&mut self, scheme: &str, entry: OpenerEntry) {
+        let key = scheme.to_ascii_lowercase();
+        if self.schemes.insert(key.clone(), entry).is_none() {
+            self.order.push(key);
+        }
     }
 
     /// Register a [`PacketSource`] opener for a scheme. Schemes are
     /// normalised to ASCII lowercase. Replaces any prior registration
     /// (including registrations of other opener kinds).
     pub fn register_packets(&mut self, scheme: &str, opener: OpenPacketsFn) {
-        self.schemes
-            .insert(scheme.to_ascii_lowercase(), OpenerEntry::Packets(opener));
+        self.insert(scheme, OpenerEntry::Packets(opener));
     }
 
     /// Register a [`FrameSource`] opener for a scheme. Schemes are
     /// normalised to ASCII lowercase. Replaces any prior registration
     /// (including registrations of other opener kinds).
     pub fn register_frames(&mut self, scheme: &str, opener: OpenFramesFn) {
-        self.schemes
-            .insert(scheme.to_ascii_lowercase(), OpenerEntry::Frames(opener));
+        self.insert(scheme, OpenerEntry::Frames(opener));
     }
 
     /// Register a [`MultiTitleSource`] opener for a scheme. Schemes
     /// are normalised to ASCII lowercase. Replaces any prior
     /// registration (including registrations of other opener kinds).
     pub fn register_multi_title(&mut self, scheme: &str, opener: OpenMultiTitleFn) {
-        self.schemes
-            .insert(scheme.to_ascii_lowercase(), OpenerEntry::MultiTitle(opener));
+        self.insert(scheme, OpenerEntry::MultiTitle(opener));
     }
 
     /// Open a URI. The URI's scheme determines which opener runs; bare
@@ -290,9 +299,10 @@ impl SourceRegistry {
         )))
     }
 
-    /// Iterate the registered schemes (for diagnostics).
+    /// Iterate the registered schemes (for diagnostics) in first-
+    /// registration order; re-registering a scheme keeps its slot.
     pub fn schemes(&self) -> impl Iterator<Item = &str> {
-        self.schemes.keys().map(|s| s.as_str())
+        self.order.iter().map(|s| s.as_str())
     }
 }
 
@@ -562,6 +572,27 @@ mod tests {
         reg.register_frames("mock", open_frames_mock);
         let out = reg.open("mock://x").expect("open");
         assert!(matches!(out, SourceOutput::Frames(_)));
+    }
+
+    #[test]
+    fn schemes_iterator_follows_first_registration_order() {
+        for _ in 0..200 {
+            let mut reg = SourceRegistry::new();
+            reg.register_bytes("zeta", open_bytes_mock);
+            reg.register_packets("Alpha", open_packets_mock);
+            reg.register_frames("omicron", open_frames_mock);
+            // Re-registering (different kind, different case) keeps
+            // the slot and the lowercase key.
+            reg.register_frames("ZETA", open_frames_mock);
+            assert_eq!(
+                reg.schemes().collect::<Vec<_>>(),
+                vec!["zeta", "alpha", "omicron"]
+            );
+            assert!(matches!(
+                reg.open("zeta://x").unwrap(),
+                SourceOutput::Frames(_)
+            ));
+        }
     }
 
     #[test]

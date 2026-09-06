@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the crate root.
 - Non-finite (`NaN`) codec probe confidences are discarded like
   non-positive ones instead of being ranked unpredictably.
+- Every diagnostic enumeration is now registration-ordered instead of
+  `HashMap`-ordered, so listings are identical across processes without
+  a sort: `ContainerRegistry::demuxer_names` / `muxer_names`,
+  `CodecRegistry::all_implementations` / `decoder_ids` / `encoder_ids`
+  (order of each id's first implementation) /
+  `all_tag_registrations` (registration order, then tag declaration
+  order), `SourceRegistry::schemes` (first-registration order).
+  Re-registering a container name or scheme replaces in place and keeps
+  its slot.
 
 ## [0.1.35](https://github.com/OxideAV/oxideav-core/compare/v0.1.34...v0.1.35) - 2026-08-20
 
