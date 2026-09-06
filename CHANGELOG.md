@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.36](https://github.com/OxideAV/oxideav-core/compare/v0.1.35...v0.1.36) - 2026-09-06
+
+### Other
+
+- document the register! dispatch contract + pin it with nested-module tests
+- registration-ordered enumerations (names, ids, implementations, tags, schemes)
+- "Resolution order" section in README + crate docs; CHANGELOG [Unreleased]
+- extension-hint resolution priority + extension_candidates
+- codec claim resolution priority + ranked tag / payload-magic candidates
+- deterministic container-probe resolution + probe priority + probe_candidates
+
 ### Fixed
 
 - `ContainerRegistry::probe_input` resolved equal top scores in
