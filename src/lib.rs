@@ -5,6 +5,31 @@
 //! every sibling crate registers itself into. The aggregate
 //! [`RuntimeContext`] bundles all four registries (codec / container /
 //! source / filter) into a single value that consumers pass around.
+//!
+//! # Resolution order
+//!
+//! Every registry lookup that can have several candidates ranks them by
+//! one rule, so the winner depends only on the registered claims and
+//! the input — never on hash-map iteration order:
+//!
+//! 1. **evidence, descending** — probe score
+//!    ([`ContainerRegistry::probe_input`]), probe confidence
+//!    ([`CodecRegistry::resolve_tag_ref`]; unprobed claims count as
+//!    `1.0`), or matched prefix length
+//!    ([`CodecRegistry::resolve_payload_magic_ref`]);
+//! 2. **resolution priority, ascending** — lower is preferred, default
+//!    [`DEFAULT_PRIORITY`]; set with
+//!    [`ContainerRegistry::register_probe_with_priority`],
+//!    [`ContainerRegistry::register_extension_with_priority`] or
+//!    [`CodecInfo::with_resolution_priority`];
+//! 3. **registration order** — earlier wins (extension hints keep their
+//!    historical most-recent-wins contract at equal priority).
+//!
+//! The ranked lists are observable via
+//! [`ContainerRegistry::probe_candidates`],
+//! [`ContainerRegistry::extension_candidates`],
+//! [`CodecRegistry::resolve_tag_candidates`] and
+//! [`CodecRegistry::resolve_payload_magic_candidates`].
 
 #![warn(missing_docs)]
 

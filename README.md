@@ -85,8 +85,10 @@ pure-Rust media framework:
   (`CodecInfo::payload_magic(b"\x01vorbis")`, `b"OpusHead"`, `b"fLaC"`,
   …) and callers resolve a stream's leading payload bytes with
   `CodecResolver::resolve_payload_magic(first_bytes)` — longest
-  matching magic wins, then registration order. Serves Ogg's BOS
-  packets and raw elementary-stream sniffing alike.
+  matching magic wins, then resolution priority, then registration
+  order. Serves Ogg's BOS packets and raw elementary-stream sniffing
+  alike. Every lookup follows the documented [resolution
+  order](#resolution-order) and exposes its ranked candidate list.
 * **`bits`** — shared MSB-first / LSB-first `BitReader` / `BitWriter`
   plus unary helpers. Used by the FLAC, AAC, H.264, HEVC, Vorbis and a
   dozen other codecs in the workspace. The LSB pair (the Vorbis §2.1.4
@@ -113,6 +115,49 @@ at the crate root, promoted to deny by CI's clippy gate) and
 `cargo doc` is warning-clean under docs.rs-strict settings.
 
 Zero C dependencies. Zero FFI. Zero `*-sys` crates.
+
+## Resolution order
+
+Every registry lookup that can have more than one candidate ranks
+them by **one rule**, so the answer depends only on the registered
+claims and the input — never on hash-map iteration order or memory
+layout, and identically in every process:
+
+1. **Evidence, descending** — the probe score (`ContainerRegistry`
+   content probes), the probe confidence (`CodecRegistry` tag claims;
+   unprobed claims count as `1.0`), or the matched prefix length
+   (payload magics). Evidence always beats the two tie-breaks below.
+2. **Resolution priority, ascending** — an `i32` attached at
+   registration; **lower is preferred**, the same convention as
+   `CodecCapabilities::priority`, default `DEFAULT_PRIORITY` (100).
+   Set it with `ContainerRegistry::register_probe_with_priority`,
+   `ContainerRegistry::register_extension_with_priority`, or
+   `CodecInfo::with_resolution_priority`. It is deliberately *not*
+   `CodecCapabilities::priority`: that field ranks implementations of
+   one codec id (hardware before software) and must not let a backend
+   out-rank another codec's identity claim on an ambiguous tag.
+3. **Registration order** — earlier registration wins for probes,
+   tags and magics. Extension hints are a replacement map and keep
+   their historical contract: at equal priority the *most recent*
+   claim wins.
+
+Each path exposes the whole ranked list for audits —
+`ContainerRegistry::probe_candidates` / `extension_candidates`,
+`CodecRegistry::resolve_tag_candidates` /
+`resolve_payload_magic_candidates` — whose first element is exactly
+what `probe_input` / `container_for_extension` / `resolve_tag` /
+`resolve_payload_magic` return. Two heads at equal evidence *and*
+equal priority mean the registry settled the claim by order alone; a
+sibling that should own such an input pins it with a priority below
+the default instead of relying on where it lands in `register_all`.
+
+Registration contracts: a container name registered twice
+(`register_demuxer` / `register_muxer` / `register_probe`) is
+replaced in place and keeps its original order slot; a codec id may
+register any number of times (multi-implementation codecs), and a tag
+claimed twice by one id resolves to that id either way while both
+claims stay visible in the candidate list. Non-positive or non-finite
+probe confidences are never candidates.
 
 ## Usage
 

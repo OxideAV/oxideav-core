@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ContainerRegistry::probe_input` resolved equal top scores in
+  `HashMap` iteration order, so an input that two content probes scored
+  identically opened as a different container from one process to the
+  next. Probes are now kept in registration order and ranked by the
+  documented resolution rule (score desc, priority asc, registration
+  order asc). Default-priority registrations now resolve to the
+  earlier-registered probe, deterministically.
+
+### Added
+
+- A single documented **resolution order** for every multi-candidate
+  lookup (README / crate docs "Resolution order"): evidence descending,
+  then resolution priority ascending (lower is preferred, default
+  `DEFAULT_PRIORITY`), then registration order. Extension hints keep
+  their most-recent-wins contract at equal priority.
+- Influence hooks (all additive; existing signatures unchanged):
+  `ContainerRegistry::register_probe_with_priority`,
+  `ContainerRegistry::register_extension_with_priority`,
+  `CodecInfo::with_resolution_priority` (+ pub field
+  `CodecInfo::resolution_priority` on the `#[non_exhaustive]` struct).
+  The codec-claim priority is separate from
+  `CodecCapabilities::priority` on purpose.
+- Observation hooks returning the full ranked candidate list:
+  `ContainerRegistry::probe_candidates` → `Vec<ProbeCandidate>`,
+  `ContainerRegistry::extension_candidates` → `Vec<ExtensionCandidate>`,
+  `CodecRegistry::resolve_tag_candidates` → `Vec<TagCandidate>`,
+  `CodecRegistry::resolve_payload_magic_candidates` →
+  `Vec<PayloadMagicCandidate>`; plus `ContainerRegistry::probe_priority`.
+  The four candidate types are `#[non_exhaustive]` and re-exported at
+  the crate root.
+- Non-finite (`NaN`) codec probe confidences are discarded like
+  non-positive ones instead of being ranked unpredictably.
+
 ## [0.1.35](https://github.com/OxideAV/oxideav-core/compare/v0.1.34...v0.1.35) - 2026-08-20
 
 ### Other
