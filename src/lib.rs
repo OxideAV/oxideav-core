@@ -48,11 +48,12 @@ pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
 pub use registry::{
     BytesSource, CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn,
-    ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory,
-    FilterRegistry, FrameSource, MultiTitleSource, Muxer, OpenBytesFn, OpenDemuxerFn, OpenFramesFn,
-    OpenMultiTitleFn, OpenMuxerFn, OpenPacketsFn, PacketSource, PayloadMagicCandidate,
-    ProbeCandidate, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceOutput, SourceRegistry,
-    TagCandidate, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
+    ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory,
+    ExtensionCandidate, FilterFactory, FilterRegistry, FrameSource, MultiTitleSource, Muxer,
+    OpenBytesFn, OpenDemuxerFn, OpenFramesFn, OpenMultiTitleFn, OpenMuxerFn, OpenPacketsFn,
+    PacketSource, PayloadMagicCandidate, ProbeCandidate, ProbeData, ProbeScore, ReadSeek,
+    RuntimeContext, SourceOutput, SourceRegistry, TagCandidate, WriteSeek, MAX_PROBE_SCORE,
+    PROBE_SCORE_EXTENSION,
 };
 pub use stream::{
     CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,

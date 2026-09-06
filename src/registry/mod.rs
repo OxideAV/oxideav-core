@@ -16,8 +16,8 @@ pub use codec::{
     EncoderFactory, PayloadMagicCandidate, TagCandidate,
 };
 pub use container::{
-    ContainerProbeFn, ContainerRegistry, Demuxer, Muxer, OpenDemuxerFn, OpenMuxerFn,
-    ProbeCandidate, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
+    ContainerProbeFn, ContainerRegistry, Demuxer, ExtensionCandidate, Muxer, OpenDemuxerFn,
+    OpenMuxerFn, ProbeCandidate, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
     PROBE_SCORE_EXTENSION,
 };
 pub use context::RuntimeContext;

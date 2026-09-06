@@ -183,6 +183,38 @@ struct ProbeEntry {
     priority: i32,
 }
 
+/// One ranked entry from [`ContainerRegistry::extension_candidates`].
+///
+/// Extension hints are a *replacement* map, not an evidence-scored
+/// probe: every claim of an extension is equally (weakly) justified,
+/// so the rule is `priority` ascending (lower is preferred), then
+/// **most recent** registration first — the historical
+/// last-registration-wins contract of
+/// [`ContainerRegistry::register_extension`], preserved so existing
+/// registrations resolve as they always did. The first element is
+/// what [`ContainerRegistry::container_for_extension`] returns.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExtensionCandidate<'a> {
+    /// Container name this claim maps the extension to.
+    pub container: &'a str,
+    /// Resolution priority attached at registration (lower is
+    /// preferred; [`DEFAULT_PRIORITY`](crate::DEFAULT_PRIORITY) unless
+    /// [`ContainerRegistry::register_extension_with_priority`] was used).
+    pub priority: i32,
+    /// 0-based sequence number of this claim among *all* extension
+    /// registrations in the registry (later claims have larger
+    /// numbers). Among equal priorities the largest wins.
+    pub order: usize,
+}
+
+/// Internal extension-claim record; see [`ExtensionCandidate`].
+struct ExtensionClaim {
+    container: String,
+    priority: i32,
+    order: usize,
+}
+
 /// Convenience trait bundle for seekable readers.
 pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}
@@ -200,8 +232,13 @@ impl<T: Write + Seek + Send> WriteSeek for T {}
 pub struct ContainerRegistry {
     demuxers: HashMap<String, OpenDemuxerFn>,
     muxers: HashMap<String, OpenMuxerFn>,
-    /// Lowercase file extension → container name (e.g. "wav" → "wav").
-    extensions: HashMap<String, String>,
+    /// Lowercase file extension → every claim made on it, in
+    /// registration order (e.g. "wav" → [wav]). Resolution picks the
+    /// lowest priority number, then the most recent claim.
+    extensions: HashMap<String, Vec<ExtensionClaim>>,
+    /// Number of extension claims registered so far — the source of
+    /// [`ExtensionClaim::order`].
+    extension_seq: usize,
     /// Content-probe records in registration order. Optional —
     /// containers without a probe still work but require an extension
     /// hint or an explicit format name. Names are unique: re-
@@ -228,9 +265,65 @@ impl ContainerRegistry {
 
     /// Map a file extension (case-insensitive) to a registered
     /// container name, for extension-hint lookups.
+    ///
+    /// Registered at the default resolution priority
+    /// ([`DEFAULT_PRIORITY`](crate::DEFAULT_PRIORITY)). When several
+    /// containers claim the same extension at equal priority the most
+    /// recent registration wins (the historical contract, kept
+    /// unchanged); use
+    /// [`register_extension_with_priority`](Self::register_extension_with_priority)
+    /// to pin a winner independent of registration order.
     pub fn register_extension(&mut self, ext: &str, container_name: &str) {
+        self.register_extension_with_priority(ext, container_name, crate::DEFAULT_PRIORITY);
+    }
+
+    /// [`register_extension`](Self::register_extension) with an explicit
+    /// resolution priority. **Lower numbers are preferred**: a claim
+    /// with a smaller `priority` beats every claim with a larger one
+    /// regardless of registration order; equal priorities fall through
+    /// to most-recent-wins. Every claim is retained (see
+    /// [`extension_candidates`](Self::extension_candidates)), so a later
+    /// default-priority claim never hides an earlier prioritised one.
+    pub fn register_extension_with_priority(
+        &mut self,
+        ext: &str,
+        container_name: &str,
+        priority: i32,
+    ) {
+        let order = self.extension_seq;
+        self.extension_seq += 1;
         self.extensions
-            .insert(ext.to_lowercase(), container_name.to_owned());
+            .entry(ext.to_lowercase())
+            .or_default()
+            .push(ExtensionClaim {
+                container: container_name.to_owned(),
+                priority,
+                order,
+            });
+    }
+
+    /// Every container that claimed `ext` (case-insensitive, no
+    /// leading dot), ranked by the extension rule: priority ascending,
+    /// then most recent registration first. Empty when the extension
+    /// is unclaimed. The first element is what
+    /// [`container_for_extension`](Self::container_for_extension)
+    /// returns; a list whose two heads share a priority is a claim the
+    /// registry settled by registration order alone.
+    pub fn extension_candidates(&self, ext: &str) -> Vec<ExtensionCandidate<'_>> {
+        let Some(claims) = self.extensions.get(&ext.to_lowercase()) else {
+            return Vec::new();
+        };
+        let mut out: Vec<ExtensionCandidate<'_>> = claims
+            .iter()
+            .map(|c| ExtensionCandidate {
+                container: c.container.as_str(),
+                priority: c.priority,
+                order: c.order,
+            })
+            .collect();
+        // `order` is unique across the registry, so the key is total.
+        out.sort_by(|a, b| a.priority.cmp(&b.priority).then(b.order.cmp(&a.order)));
+        out
     }
 
     /// Attach a content-based probe to a registered demuxer. Called by
@@ -371,8 +464,24 @@ impl ContainerRegistry {
     }
 
     /// Look up a container name from a file extension (no leading dot).
+    /// Among several claims the lowest priority number wins, then the
+    /// most recent registration — see
+    /// [`extension_candidates`](Self::extension_candidates).
     pub fn container_for_extension(&self, ext: &str) -> Option<&str> {
-        self.extensions.get(&ext.to_lowercase()).map(|s| s.as_str())
+        // Same rule as `extension_candidates` without the allocation:
+        // strictly-lower priority replaces; equal priority replaces
+        // only when more recent (larger order), which a forward walk
+        // over the registration-ordered claims gives for free with
+        // `<=`.
+        let claims = self.extensions.get(&ext.to_lowercase())?;
+        let mut best: Option<&ExtensionClaim> = None;
+        for c in claims {
+            best = match best {
+                Some(b) if c.priority > b.priority => Some(b),
+                _ => Some(c),
+            };
+        }
+        best.map(|c| c.container.as_str())
     }
 
     /// Detect the container format by reading the first ~256 KB of the
@@ -623,6 +732,67 @@ mod tests {
             reg.probe_input(&mut cur, Some("abc")),
             Err(Error::FormatNotFound(_))
         ));
+    }
+
+    #[test]
+    fn extension_equal_priority_most_recent_wins_deterministically() {
+        // The historical contract, now with a visible candidate list.
+        for _ in 0..1000 {
+            let mut ctx = crate::RuntimeContext::new();
+            ctx.containers.register_extension("SYN", "first");
+            ctx.containers.register_extension("syn", "second");
+            ctx.containers.register_extension("Syn", "third");
+            assert_eq!(ctx.containers.container_for_extension("syn"), Some("third"));
+            assert_eq!(ctx.containers.container_for_extension("SYN"), Some("third"));
+            let cands = ctx.containers.extension_candidates("syn");
+            assert_eq!(
+                cands.iter().map(|c| c.container).collect::<Vec<_>>(),
+                vec!["third", "second", "first"]
+            );
+            assert_eq!(
+                cands.iter().map(|c| c.order).collect::<Vec<_>>(),
+                vec![2, 1, 0]
+            );
+        }
+    }
+
+    #[test]
+    fn extension_priority_beats_registration_recency() {
+        let mut reg = ContainerRegistry::new();
+        reg.register_extension_with_priority("syn", "pinned", 10);
+        reg.register_extension("syn", "later-default");
+        reg.register_extension("syn", "latest-default");
+        assert_eq!(reg.container_for_extension("syn"), Some("pinned"));
+        let cands = reg.extension_candidates("syn");
+        assert_eq!(
+            cands.iter().map(|c| c.container).collect::<Vec<_>>(),
+            vec!["pinned", "latest-default", "later-default"]
+        );
+        assert_eq!(cands[0].priority, 10);
+        assert_eq!(cands[1].priority, crate::DEFAULT_PRIORITY);
+
+        // A later, even-lower priority claim takes over; an unrelated
+        // extension is unaffected; an unclaimed one is empty / None.
+        reg.register_extension_with_priority("syn", "pinned-harder", 1);
+        assert_eq!(reg.container_for_extension("syn"), Some("pinned-harder"));
+        reg.register_extension("other", "elsewhere");
+        assert_eq!(reg.container_for_extension("other"), Some("elsewhere"));
+        assert!(reg.extension_candidates("nope").is_empty());
+        assert_eq!(reg.container_for_extension("nope"), None);
+    }
+
+    #[test]
+    fn extension_order_is_global_across_extensions() {
+        // `order` counts every claim in the registry, so two claims on
+        // different extensions never share a sequence number.
+        let mut reg = ContainerRegistry::new();
+        reg.register_extension("a", "x");
+        reg.register_extension("b", "y");
+        reg.register_extension("a", "z");
+        let a = reg.extension_candidates("a");
+        let b = reg.extension_candidates("b");
+        assert_eq!(a.iter().map(|c| c.order).collect::<Vec<_>>(), vec![2, 0]);
+        assert_eq!(b[0].order, 1);
     }
 
     #[test]
