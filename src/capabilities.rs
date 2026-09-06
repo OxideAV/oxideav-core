@@ -25,6 +25,11 @@ use crate::format::{MediaType, PixelFormat};
 /// Default priority for software implementations. Lower numbers are preferred
 /// at resolution time, so register hardware impls with a smaller value (e.g.
 /// `10`) and software fallbacks with the default `100`.
+///
+/// The same value and the same "lower is preferred" convention serve as
+/// the default *resolution* priority for every registry tie-break
+/// (container probes, codec tag / payload-magic claims) — see the
+/// crate-level "Resolution order" section.
 pub const DEFAULT_PRIORITY: i32 = 100;
 
 /// What an implementation can do plus how it ranks vs alternatives.

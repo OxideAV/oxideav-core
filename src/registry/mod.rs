@@ -15,8 +15,9 @@ pub use codec::{
     CodecImplementation, CodecInfo, CodecRegistry, Decoder, DecoderFactory, Encoder, EncoderFactory,
 };
 pub use container::{
-    ContainerProbeFn, ContainerRegistry, Demuxer, Muxer, OpenDemuxerFn, OpenMuxerFn, ProbeData,
-    ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE, PROBE_SCORE_EXTENSION,
+    ContainerProbeFn, ContainerRegistry, Demuxer, Muxer, OpenDemuxerFn, OpenMuxerFn,
+    ProbeCandidate, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
+    PROBE_SCORE_EXTENSION,
 };
 pub use context::RuntimeContext;
 pub use filter::{FilterFactory, FilterRegistry};

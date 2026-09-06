@@ -149,6 +149,40 @@ pub const PROBE_SCORE_EXTENSION: ProbeScore = 25;
 /// be invoked once per registered demuxer on every input file.
 pub type ContainerProbeFn = fn(probe: &ProbeData) -> ProbeScore;
 
+/// One ranked entry from [`ContainerRegistry::probe_candidates`].
+///
+/// Candidates are ordered by the registry's resolution rule —
+/// `score` descending, then `priority` ascending (lower is
+/// preferred), then `order` ascending (earlier registration wins) —
+/// so the first element is exactly what
+/// [`ContainerRegistry::probe_input`] would open. The struct is
+/// `#[non_exhaustive]`: read it by field, construct it never.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProbeCandidate<'a> {
+    /// Container name the probe was registered under.
+    pub name: &'a str,
+    /// Score the probe returned for this input (never `0` — non-
+    /// matching probes are not candidates).
+    pub score: ProbeScore,
+    /// Resolution priority attached at registration (lower is
+    /// preferred; [`DEFAULT_PRIORITY`](crate::DEFAULT_PRIORITY) unless
+    /// [`ContainerRegistry::register_probe_with_priority`] was used).
+    pub priority: i32,
+    /// 0-based position of this container's *first* probe
+    /// registration in the registry — the final tie-break.
+    pub order: usize,
+}
+
+/// Internal probe record: `probes` is kept as a registration-ordered
+/// vector (not a map) so equal-score ties resolve identically in every
+/// process — see [`ContainerRegistry::probe_input`].
+struct ProbeEntry {
+    name: String,
+    probe: ContainerProbeFn,
+    priority: i32,
+}
+
 /// Convenience trait bundle for seekable readers.
 pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}
@@ -168,10 +202,12 @@ pub struct ContainerRegistry {
     muxers: HashMap<String, OpenMuxerFn>,
     /// Lowercase file extension → container name (e.g. "wav" → "wav").
     extensions: HashMap<String, String>,
-    /// Container name → content-probe function. Optional — containers
-    /// without a probe still work but require an extension hint or an
-    /// explicit format name.
-    probes: HashMap<String, ContainerProbeFn>,
+    /// Content-probe records in registration order. Optional —
+    /// containers without a probe still work but require an extension
+    /// hint or an explicit format name. Names are unique: re-
+    /// registering a name replaces its probe/priority in place (the
+    /// name keeps its original position in the order).
+    probes: Vec<ProbeEntry>,
 }
 
 impl ContainerRegistry {
@@ -200,8 +236,96 @@ impl ContainerRegistry {
     /// Attach a content-based probe to a registered demuxer. Called by
     /// the registry's [`probe_input`](Self::probe_input) to detect the
     /// container format from the first few KB of an input stream.
+    ///
+    /// The probe is registered at the default resolution priority
+    /// ([`DEFAULT_PRIORITY`](crate::DEFAULT_PRIORITY)); equal-score
+    /// ties against other default-priority probes go to the earlier
+    /// registration. Use
+    /// [`register_probe_with_priority`](Self::register_probe_with_priority)
+    /// to win (or yield) such ties explicitly. Re-registering a name
+    /// replaces its probe and resets its priority to the default; the
+    /// name keeps the registration-order slot of its first
+    /// registration.
     pub fn register_probe(&mut self, container_name: &str, probe: ContainerProbeFn) {
-        self.probes.insert(container_name.to_owned(), probe);
+        self.register_probe_with_priority(container_name, probe, crate::DEFAULT_PRIORITY);
+    }
+
+    /// [`register_probe`](Self::register_probe) with an explicit
+    /// resolution priority. **Lower numbers are preferred**, the same
+    /// convention as [`CodecCapabilities::priority`](crate::CodecCapabilities::priority):
+    /// when two probes return the same non-zero score for an input,
+    /// the one with the smaller `priority` wins; equal priorities fall
+    /// through to registration order (earlier wins). Priority never
+    /// out-ranks score — a higher-scoring probe always wins regardless
+    /// of priority.
+    ///
+    /// Typical use: two containers that share a signature family
+    /// where one is the more specific reading register with a
+    /// priority below the default so the specific container wins the
+    /// tie whatever order the two crates happened to register in.
+    pub fn register_probe_with_priority(
+        &mut self,
+        container_name: &str,
+        probe: ContainerProbeFn,
+        priority: i32,
+    ) {
+        if let Some(entry) = self.probes.iter_mut().find(|e| e.name == container_name) {
+            entry.probe = probe;
+            entry.priority = priority;
+        } else {
+            self.probes.push(ProbeEntry {
+                name: container_name.to_owned(),
+                probe,
+                priority,
+            });
+        }
+    }
+
+    /// Resolution priority currently attached to `container_name`'s
+    /// probe, or `None` when no probe is registered under that name.
+    pub fn probe_priority(&self, container_name: &str) -> Option<i32> {
+        self.probes
+            .iter()
+            .find(|e| e.name == container_name)
+            .map(|e| e.priority)
+    }
+
+    /// Score every registered probe against `data` and return the
+    /// non-zero results ranked by the resolution rule: score
+    /// descending, then priority ascending, then registration order
+    /// ascending. The first element is the container
+    /// [`probe_input`](Self::probe_input) would pick (before its
+    /// extension-table fallback); the rest show who lost and by how
+    /// much — the hook for collision audits that want to prove a tie
+    /// is broken the intended way rather than merely broken.
+    ///
+    /// Pure and allocation-light: the caller supplies the buffer, so
+    /// this can run against synthetic inputs without any I/O.
+    pub fn probe_candidates(&self, data: &ProbeData) -> Vec<ProbeCandidate<'_>> {
+        let mut out: Vec<ProbeCandidate<'_>> = self
+            .probes
+            .iter()
+            .enumerate()
+            .filter_map(|(order, e)| {
+                let score = (e.probe)(data);
+                (score != 0).then_some(ProbeCandidate {
+                    name: e.name.as_str(),
+                    score,
+                    priority: e.priority,
+                    order,
+                })
+            })
+            .collect();
+        // Stable sort on a total key; `order` is unique so the result
+        // is fully determined by the registrations, never by memory
+        // layout or hashing.
+        out.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then(a.priority.cmp(&b.priority))
+                .then(a.order.cmp(&b.order))
+        });
+        out
     }
 
     /// Iterate the registered demuxer format names (arbitrary order).
@@ -256,6 +380,13 @@ impl ContainerRegistry {
     /// scoring container's name. The extension is passed to probes as a
     /// hint — they may use it to break ties when their signature is weak.
     ///
+    /// Equal top scores are resolved deterministically: the probe with
+    /// the lower registration priority number wins, then the earlier
+    /// registration (see [`probe_candidates`](Self::probe_candidates)
+    /// for the full ranked list). The result therefore depends only on
+    /// the input bytes and the sequence of `register_probe*` calls —
+    /// never on process-specific hash state.
+    ///
     /// Falls back to the extension table if no probe scores above zero.
     /// The input cursor is restored to its starting position on success
     /// and on the I/O failure paths that allow it.
@@ -286,19 +417,8 @@ impl ContainerRegistry {
             ext: ext_lower.as_deref(),
         };
 
-        let mut best: Option<(&str, ProbeScore)> = None;
-        for (name, probe) in &self.probes {
-            let score = probe(&probe_data);
-            if score == 0 {
-                continue;
-            }
-            match best {
-                Some((_, prev)) if score <= prev => {}
-                _ => best = Some((name.as_str(), score)),
-            }
-        }
-        if let Some((name, _)) = best {
-            return Ok(name.to_owned());
+        if let Some(best) = self.probe_candidates(&probe_data).first() {
+            return Ok(best.name.to_owned());
         }
 
         // Fall back to extension lookup with the conventional weak score.
@@ -343,6 +463,166 @@ mod tests {
                 other
             ),
         }
+    }
+
+    // ───────────── resolution-order tests (synthetic registrations) ─────────────
+    //
+    // Every registration below is invented for the test: the rule is
+    // format-agnostic and must be provable without naming any real
+    // container. Probe fns are non-capturing closures coerced to
+    // `ContainerProbeFn`.
+
+    fn always(score: ProbeScore) -> ContainerProbeFn {
+        match score {
+            100 => |_: &ProbeData| 100,
+            90 => |_: &ProbeData| 90,
+            50 => |_: &ProbeData| 50,
+            _ => |_: &ProbeData| 0,
+        }
+    }
+
+    fn names<'a>(cands: &'a [ProbeCandidate<'a>]) -> Vec<&'a str> {
+        cands.iter().map(|c| c.name).collect()
+    }
+
+    fn probe_cursor(reg: &ContainerRegistry, bytes: &[u8]) -> String {
+        let mut cur = std::io::Cursor::new(bytes.to_vec());
+        reg.probe_input(&mut cur, None).expect("some probe matches")
+    }
+
+    #[test]
+    fn equal_scores_resolve_by_registration_order_across_fresh_registries() {
+        // Six probes that all claim the same bytes at the same score.
+        // The winner must be the first-registered one in every one of
+        // 1000 independently built registries — the property the old
+        // `HashMap` walk could not offer.
+        const ORDER: [&str; 6] = ["zeta", "alpha", "omicron", "beta", "kappa", "mu"];
+        for _ in 0..1000 {
+            let mut ctx = crate::RuntimeContext::new();
+            for name in ORDER {
+                ctx.containers.register_probe(name, always(100));
+            }
+            assert_eq!(probe_cursor(&ctx.containers, b"any bytes"), "zeta");
+            let cands = ctx.containers.probe_candidates(&ProbeData {
+                buf: b"any bytes",
+                ext: None,
+            });
+            assert_eq!(names(&cands), ORDER.to_vec());
+        }
+    }
+
+    #[test]
+    fn registration_order_is_the_only_remaining_discriminator() {
+        // Same two probes, same score, same (default) priority: the
+        // winner flips with the registration order and with nothing
+        // else — proof that names never enter the ranking.
+        let mut a = ContainerRegistry::new();
+        a.register_probe("second-by-name", always(100));
+        a.register_probe("first-by-name", always(100));
+        assert_eq!(probe_cursor(&a, b"x"), "second-by-name");
+
+        let mut b = ContainerRegistry::new();
+        b.register_probe("first-by-name", always(100));
+        b.register_probe("second-by-name", always(100));
+        assert_eq!(probe_cursor(&b, b"x"), "first-by-name");
+    }
+
+    #[test]
+    fn lower_priority_number_beats_registration_order() {
+        let mut reg = ContainerRegistry::new();
+        reg.register_probe("earlier", always(100));
+        reg.register_probe_with_priority("later-but-preferred", always(100), 10);
+        assert_eq!(probe_cursor(&reg, b"x"), "later-but-preferred");
+        let cands = reg.probe_candidates(&ProbeData {
+            buf: b"x",
+            ext: None,
+        });
+        assert_eq!(names(&cands), vec!["later-but-preferred", "earlier"]);
+        assert_eq!(cands[0].priority, 10);
+        assert_eq!(cands[0].order, 1);
+        assert_eq!(cands[1].priority, crate::DEFAULT_PRIORITY);
+        assert_eq!(cands[1].order, 0);
+    }
+
+    #[test]
+    fn score_always_beats_priority() {
+        // A stronger signature wins even against a probe that asked
+        // for the best possible priority.
+        let mut reg = ContainerRegistry::new();
+        reg.register_probe_with_priority("confident-but-yielding", always(90), i32::MIN);
+        reg.register_probe("weakly-prioritised-but-certain", always(100));
+        assert_eq!(probe_cursor(&reg, b"x"), "weakly-prioritised-but-certain");
+    }
+
+    #[test]
+    fn probe_candidates_excludes_zero_scores_and_ranks_fully() {
+        let mut reg = ContainerRegistry::new();
+        reg.register_probe("silent", always(0));
+        reg.register_probe("half", always(50));
+        reg.register_probe_with_priority("full-late-preferred", always(100), 1);
+        reg.register_probe("full-early", always(100));
+        reg.register_probe("half-again", always(50));
+        // Insertion order: silent(0) half(1) full-late-preferred(2)
+        // full-early(3) half-again(4). Ranking: 100s first (priority
+        // 1 before default), then 50s in registration order; the
+        // zero-scorer is absent.
+        let cands = reg.probe_candidates(&ProbeData {
+            buf: b"x",
+            ext: None,
+        });
+        assert_eq!(
+            names(&cands),
+            vec!["full-late-preferred", "full-early", "half", "half-again"]
+        );
+        assert_eq!(
+            cands.iter().map(|c| c.order).collect::<Vec<_>>(),
+            vec![2, 3, 1, 4]
+        );
+        assert!(cands.iter().all(|c| c.score != 0));
+    }
+
+    #[test]
+    fn re_registering_a_name_replaces_in_place() {
+        // The name keeps its original order slot; probe and priority
+        // are replaced (priority resets to the default when the plain
+        // `register_probe` form is used).
+        let mut reg = ContainerRegistry::new();
+        reg.register_probe_with_priority("first", always(100), 5);
+        reg.register_probe("second", always(100));
+        assert_eq!(reg.probe_priority("first"), Some(5));
+        assert_eq!(probe_cursor(&reg, b"x"), "first");
+
+        // Replace `first` with a probe that no longer matches.
+        reg.register_probe("first", always(0));
+        assert_eq!(reg.probe_priority("first"), Some(crate::DEFAULT_PRIORITY));
+        assert_eq!(probe_cursor(&reg, b"x"), "second");
+
+        // Replace it again with a matching probe: it is still slot 0,
+        // so it beats `second` on registration order.
+        reg.register_probe("first", always(100));
+        let cands = reg.probe_candidates(&ProbeData {
+            buf: b"x",
+            ext: None,
+        });
+        assert_eq!(names(&cands), vec!["first", "second"]);
+        assert_eq!(cands[0].order, 0);
+        assert_eq!(reg.probe_priority("never-registered"), None);
+    }
+
+    #[test]
+    fn probe_input_falls_back_to_extension_when_nothing_scores() {
+        let mut reg = ContainerRegistry::new();
+        reg.register_probe("silent", always(0));
+        reg.register_extension("xyz", "by-extension");
+        let mut cur = std::io::Cursor::new(b"bytes".to_vec());
+        assert_eq!(
+            reg.probe_input(&mut cur, Some("XYZ")).unwrap(),
+            "by-extension"
+        );
+        assert!(matches!(
+            reg.probe_input(&mut cur, Some("abc")),
+            Err(Error::FormatNotFound(_))
+        ));
     }
 
     #[test]

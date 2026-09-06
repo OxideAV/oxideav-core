@@ -50,8 +50,8 @@ pub use registry::{
     BytesSource, CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn,
     ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory, FilterFactory,
     FilterRegistry, FrameSource, MultiTitleSource, Muxer, OpenBytesFn, OpenDemuxerFn, OpenFramesFn,
-    OpenMultiTitleFn, OpenMuxerFn, OpenPacketsFn, PacketSource, ProbeData, ProbeScore, ReadSeek,
-    RuntimeContext, SourceOutput, SourceRegistry, WriteSeek, MAX_PROBE_SCORE,
+    OpenMultiTitleFn, OpenMuxerFn, OpenPacketsFn, PacketSource, ProbeCandidate, ProbeData,
+    ProbeScore, ReadSeek, RuntimeContext, SourceOutput, SourceRegistry, WriteSeek, MAX_PROBE_SCORE,
     PROBE_SCORE_EXTENSION,
 };
 pub use stream::{
