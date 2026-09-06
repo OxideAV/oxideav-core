@@ -13,13 +13,17 @@
 //! - **tag-keyed** — `resolve_tag(&ProbeContext)` walks every
 //!   registration whose `tags` contains `ctx.tag`, calls each probe
 //!   (treating `None` as "returns 1.0"), and returns the id with the
-//!   highest resulting confidence. First-registered wins on ties.
+//!   highest resulting confidence. Ties go to the lower
+//!   [`CodecInfo::resolution_priority`], then to the earlier
+//!   registration; `resolve_tag_candidates` exposes the ranked list.
 //! - **payload-magic-keyed** — `resolve_payload_magic(first_bytes)`
 //!   prefix-matches the claimed payload magic prefixes against a
-//!   stream's leading bytes; longest matching magic wins, then
-//!   registration order. For containers that identify a codec by the
-//!   payload itself rather than a tag (e.g. an Ogg logical stream's
-//!   first packet, or raw elementary streams).
+//!   stream's leading bytes; longest matching magic wins, then the
+//!   lower resolution priority, then registration order
+//!   (`resolve_payload_magic_candidates` exposes the ranked list). For
+//!   containers that identify a codec by the payload itself rather
+//!   than a tag (e.g. an Ogg logical stream's first packet, or raw
+//!   elementary streams).
 //! - **diagnostic** — `all_implementations`, `all_tag_registrations`,
 //!   `all_payload_magic_registrations`.
 //!
@@ -303,6 +307,16 @@ pub struct CodecInfo {
     /// they register; Phase-3 consumers (CLI) call it on demand.
     /// Attached via [`Self::with_engine_probe`].
     pub engine_probe: Option<crate::engine::EngineProbeFn>,
+    /// Tie-break rank for this registration's **claims** (tags and
+    /// payload magics) when another codec id claims the same tag /
+    /// magic with equal evidence. Lower is preferred; defaults to
+    /// [`DEFAULT_PRIORITY`](crate::DEFAULT_PRIORITY). Deliberately
+    /// separate from [`CodecCapabilities::priority`]: that field ranks
+    /// *implementations of one codec id* against each other (HW before
+    /// SW), and a backend's implementation preference must not silently
+    /// out-rank a different codec's identity claim on an ambiguous tag.
+    /// Attached via [`Self::with_resolution_priority`].
+    pub resolution_priority: i32,
 }
 
 impl CodecInfo {
@@ -323,7 +337,19 @@ impl CodecInfo {
             decoder_options_schema: None,
             engine_id: None,
             engine_probe: None,
+            resolution_priority: crate::DEFAULT_PRIORITY,
         }
+    }
+
+    /// Set the claim tie-break priority (see
+    /// [`Self::resolution_priority`]). Lower is preferred. Only consulted
+    /// when another codec id claims the same tag with equal probe
+    /// confidence, or the same-length payload magic; evidence always
+    /// out-ranks priority, and equal priorities fall through to
+    /// registration order (earlier wins).
+    pub fn with_resolution_priority(mut self, priority: i32) -> Self {
+        self.resolution_priority = priority;
+        self
     }
 
     /// Replace the capability description. The default built by
@@ -497,6 +523,51 @@ pub struct CodecRegistry {
 struct RegistrationRecord {
     id: CodecId,
     probe: Option<ProbeFn>,
+    /// Claim tie-break rank copied from [`CodecInfo::resolution_priority`].
+    priority: i32,
+}
+
+/// One ranked entry from [`CodecRegistry::resolve_tag_candidates`].
+///
+/// Ordered by the registry's resolution rule — `confidence`
+/// descending, then `priority` ascending (lower is preferred), then
+/// `order` ascending (earlier registration wins) — so the first
+/// element is exactly what [`CodecRegistry::resolve_tag_ref`] returns.
+/// `#[non_exhaustive]`: read by field, never constructed by callers.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TagCandidate<'a> {
+    /// Codec id of the claiming registration.
+    pub id: &'a CodecId,
+    /// Probe confidence for this context (`1.0` for unprobed claims;
+    /// never `<= 0.0` — such claims are not candidates).
+    pub confidence: crate::Confidence,
+    /// Claim tie-break priority (see [`CodecInfo::resolution_priority`]).
+    pub priority: i32,
+    /// 0-based registration sequence number (one per
+    /// [`CodecRegistry::register`] call) — the final tie-break. The
+    /// same id can appear more than once when it registered the claim
+    /// twice; the registry does not fold duplicates.
+    pub order: usize,
+}
+
+/// One ranked entry from [`CodecRegistry::resolve_payload_magic_candidates`].
+///
+/// Ordered by the registry's resolution rule — magic length
+/// descending (most specific prefix), then `priority` ascending, then
+/// `order` ascending — so the first element is exactly what
+/// [`CodecRegistry::resolve_payload_magic_ref`] returns.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PayloadMagicCandidate<'a> {
+    /// Codec id of the claiming registration.
+    pub id: &'a CodecId,
+    /// The magic prefix that matched.
+    pub magic: &'a [u8],
+    /// Claim tie-break priority (see [`CodecInfo::resolution_priority`]).
+    pub priority: i32,
+    /// 0-based registration sequence number — the final tie-break.
+    pub order: usize,
 }
 
 impl CodecRegistry {
@@ -535,6 +606,7 @@ impl CodecRegistry {
             // CodecImplementation built in that branch.
             engine_id,
             engine_probe,
+            resolution_priority,
         } = info;
 
         let caps = {
@@ -571,6 +643,7 @@ impl CodecRegistry {
         self.registrations.push(RegistrationRecord {
             id: id.clone(),
             probe,
+            priority: resolution_priority,
         });
         for tag in tags {
             self.tag_index.entry(tag).or_default().push(record_idx);
@@ -750,28 +823,57 @@ impl CodecRegistry {
     ///
     /// Walks every registration that claimed `ctx.tag`, calls its
     /// probe with `ctx`, and returns the id of the registration that
-    /// scored highest. Probes that return `0.0` are discarded; ties
-    /// on confidence are broken by registration order (first wins).
+    /// scored highest. Probes that return `0.0` (or anything not
+    /// strictly positive, `NaN` included) are discarded; ties on
+    /// confidence are broken by [`CodecInfo::resolution_priority`]
+    /// (lower wins), then by registration order (first wins).
     /// Registrations with no probe are treated as returning `1.0`.
+    /// [`resolve_tag_candidates`](Self::resolve_tag_candidates) returns
+    /// the whole ranked list this picks the head of.
     pub fn resolve_tag_ref(&self, ctx: &ProbeContext) -> Option<&CodecId> {
-        let idxs = self.tag_index.get(ctx.tag)?;
-        let mut best: Option<(f32, usize)> = None;
-        for &i in idxs {
-            let rec = &self.registrations[i];
-            let conf = match rec.probe {
-                Some(f) => f(ctx),
-                None => 1.0,
-            };
-            if conf <= 0.0 {
-                continue;
-            }
-            best = match best {
-                None => Some((conf, i)),
-                Some((bc, _)) if conf > bc => Some((conf, i)),
-                other => other,
-            };
-        }
-        best.map(|(_, i)| &self.registrations[i].id)
+        self.resolve_tag_candidates(ctx).first().map(|c| c.id)
+    }
+
+    /// Every registration that claimed `ctx.tag` and whose probe
+    /// accepts the context, ranked by the resolution rule: confidence
+    /// descending, then priority ascending, then registration order
+    /// ascending. Empty when the tag is unclaimed or every claimant's
+    /// probe refused. The observation hook for collision audits: a
+    /// list with two heads at equal confidence *and* equal priority is
+    /// a tie the registry broke by registration order alone.
+    pub fn resolve_tag_candidates(&self, ctx: &ProbeContext) -> Vec<TagCandidate<'_>> {
+        let Some(idxs) = self.tag_index.get(ctx.tag) else {
+            return Vec::new();
+        };
+        let mut out: Vec<TagCandidate<'_>> = idxs
+            .iter()
+            .filter_map(|&i| {
+                let rec = &self.registrations[i];
+                let confidence = match rec.probe {
+                    Some(f) => f(ctx),
+                    None => 1.0,
+                };
+                // `> 0.0` is false for NaN, so a broken probe is
+                // dropped rather than ranked unpredictably.
+                (confidence > 0.0).then_some(TagCandidate {
+                    id: &rec.id,
+                    confidence,
+                    priority: rec.priority,
+                    order: i,
+                })
+            })
+            .collect();
+        // `idxs` is already in registration order and `order` is
+        // unique, so the sort key is total and the result is fixed by
+        // the registrations alone.
+        out.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.priority.cmp(&b.priority))
+                .then(a.order.cmp(&b.order))
+        });
+        out
     }
 
     /// Inherent form of payload-magic resolution that returns a
@@ -785,25 +887,54 @@ impl CodecRegistry {
     /// (an Ogg demuxer passes the first packet of a logical stream; a
     /// raw-stream prober passes the file head). The **longest**
     /// matching magic wins (most specific claim); remaining ties are
-    /// broken by registration order (first wins). Unlike the tag path
-    /// there is no probe step: a payload magic is itself the bitstream
+    /// broken by [`CodecInfo::resolution_priority`] (lower wins), then
+    /// by registration order (first wins). Unlike the tag path there
+    /// is no probe step: a payload magic is itself the bitstream
     /// evidence a probe would look for, and specificity is expressed
     /// by prefix length instead of a confidence value.
+    /// [`resolve_payload_magic_candidates`](Self::resolve_payload_magic_candidates)
+    /// returns the whole ranked list this picks the head of.
     pub fn resolve_payload_magic_ref(&self, first_bytes: &[u8]) -> Option<&CodecId> {
-        let mut best: Option<(usize, usize)> = None; // (magic_len, reg idx)
-        for (magic, idx) in &self.magic_index {
-            if !first_bytes.starts_with(magic) {
-                continue;
-            }
-            // Strict `>` keeps the earlier registration on equal
-            // lengths — `magic_index` is in registration order.
-            best = match best {
-                None => Some((magic.len(), *idx)),
-                Some((len, _)) if magic.len() > len => Some((magic.len(), *idx)),
-                other => other,
-            };
-        }
-        best.map(|(_, i)| &self.registrations[i].id)
+        self.resolve_payload_magic_candidates(first_bytes)
+            .first()
+            .map(|c| c.id)
+    }
+
+    /// Every registered payload magic that is a prefix of
+    /// `first_bytes`, ranked by the resolution rule: magic length
+    /// descending, then priority ascending, then registration order
+    /// ascending. The payload-magic companion to
+    /// [`resolve_tag_candidates`](Self::resolve_tag_candidates).
+    pub fn resolve_payload_magic_candidates(
+        &self,
+        first_bytes: &[u8],
+    ) -> Vec<PayloadMagicCandidate<'_>> {
+        let mut out: Vec<PayloadMagicCandidate<'_>> = self
+            .magic_index
+            .iter()
+            .filter(|(magic, _)| first_bytes.starts_with(magic))
+            .map(|(magic, i)| {
+                let rec = &self.registrations[*i];
+                PayloadMagicCandidate {
+                    id: &rec.id,
+                    magic: magic.as_slice(),
+                    priority: rec.priority,
+                    order: *i,
+                }
+            })
+            .collect();
+        // One registration may claim several magics that all match
+        // (`order` then repeats); the stable sort keeps those in their
+        // declaration order, which is the only remaining distinction
+        // and is itself fixed by the registration.
+        out.sort_by(|a, b| {
+            b.magic
+                .len()
+                .cmp(&a.magic.len())
+                .then(a.priority.cmp(&b.priority))
+                .then(a.order.cmp(&b.order))
+        });
+        out
     }
 
     /// Iterator over every `(payload magic, codec_id)` pair currently
@@ -1242,6 +1373,216 @@ mod payload_magic_tests {
             Some(&CodecId::new("shorten"))
         );
         assert_eq!(reg.resolve_payload_magic_ref(b"RIFF"), None);
+    }
+}
+
+/// Resolution-order tests. Every id / tag / magic here is invented:
+/// the rule is format-agnostic and must be provable with synthetic
+/// registrations only.
+#[cfg(test)]
+mod resolution_order_tests {
+    use super::*;
+    use crate::CodecCapabilities;
+
+    fn info(id: &str) -> CodecInfo {
+        CodecInfo::new(CodecId::new(id)).capabilities(CodecCapabilities::audio(id))
+    }
+
+    fn tag_ids<'a>(cands: &[TagCandidate<'a>]) -> Vec<&'a str> {
+        cands.iter().map(|c| c.id.as_str()).collect()
+    }
+
+    fn magic_ids<'a>(cands: &[PayloadMagicCandidate<'a>]) -> Vec<&'a str> {
+        cands.iter().map(|c| c.id.as_str()).collect()
+    }
+
+    #[test]
+    fn codec_info_resolution_priority_defaults_and_builder() {
+        assert_eq!(info("x").resolution_priority, crate::DEFAULT_PRIORITY);
+        assert_eq!(info("x").with_resolution_priority(7).resolution_priority, 7);
+    }
+
+    #[test]
+    fn equal_tag_claims_resolve_by_registration_order_across_fresh_contexts() {
+        const ORDER: [&str; 5] = ["zeta", "alpha", "omicron", "beta", "kappa"];
+        let tag = CodecTag::fourcc(b"SYNT");
+        for _ in 0..1000 {
+            let mut ctx = crate::RuntimeContext::new();
+            for id in ORDER {
+                ctx.codecs.register(info(id).tag(tag.clone()));
+            }
+            let pc = ProbeContext::new(&tag);
+            assert_eq!(
+                ctx.codecs.resolve_tag_ref(&pc).map(|c| c.as_str()),
+                Some("zeta")
+            );
+            let cands = ctx.codecs.resolve_tag_candidates(&pc);
+            assert_eq!(tag_ids(&cands), ORDER.to_vec());
+            assert_eq!(
+                cands.iter().map(|c| c.order).collect::<Vec<_>>(),
+                vec![0, 1, 2, 3, 4]
+            );
+        }
+    }
+
+    #[test]
+    fn equal_magic_claims_resolve_by_registration_order_across_fresh_contexts() {
+        const ORDER: [&str; 4] = ["zeta", "alpha", "omicron", "beta"];
+        for _ in 0..1000 {
+            let mut ctx = crate::RuntimeContext::new();
+            for id in ORDER {
+                ctx.codecs.register(info(id).payload_magic(b"SYNTHMAGIC"));
+            }
+            assert_eq!(
+                ctx.codecs
+                    .resolve_payload_magic_ref(b"SYNTHMAGIC\x00")
+                    .map(|c| c.as_str()),
+                Some("zeta")
+            );
+            let cands = ctx
+                .codecs
+                .resolve_payload_magic_candidates(b"SYNTHMAGIC\x00");
+            assert_eq!(magic_ids(&cands), ORDER.to_vec());
+        }
+    }
+
+    #[test]
+    fn tag_priority_beats_registration_order() {
+        let tag = CodecTag::wave_format(0x7777);
+        let mut reg = CodecRegistry::new();
+        reg.register(info("earlier").tag(tag.clone()));
+        reg.register(
+            info("later-preferred")
+                .with_resolution_priority(10)
+                .tag(tag.clone()),
+        );
+        let pc = ProbeContext::new(&tag);
+        assert_eq!(
+            reg.resolve_tag_ref(&pc).map(|c| c.as_str()),
+            Some("later-preferred")
+        );
+        let cands = reg.resolve_tag_candidates(&pc);
+        assert_eq!(tag_ids(&cands), vec!["later-preferred", "earlier"]);
+        assert_eq!(cands[0].priority, 10);
+        assert_eq!(cands[0].order, 1);
+        assert_eq!(cands[1].priority, crate::DEFAULT_PRIORITY);
+        assert_eq!(cands[1].order, 0);
+        assert_eq!(cands[0].confidence, 1.0);
+    }
+
+    #[test]
+    fn tag_confidence_beats_priority() {
+        // A probe that positively identifies the payload wins against
+        // an unprobed-but-top-priority claim only when its confidence
+        // is higher; at 1.0 vs 1.0 the priority decides.
+        let tag = CodecTag::fourcc(b"AMBI");
+        let mut reg = CodecRegistry::new();
+        reg.register(
+            info("prioritised")
+                .with_resolution_priority(i32::MIN)
+                .probe(|_| 0.6)
+                .tag(tag.clone()),
+        );
+        reg.register(info("certain").tag(tag.clone()));
+        let pc = ProbeContext::new(&tag);
+        assert_eq!(
+            reg.resolve_tag_ref(&pc).map(|c| c.as_str()),
+            Some("certain")
+        );
+        let cands = reg.resolve_tag_candidates(&pc);
+        assert_eq!(tag_ids(&cands), vec!["certain", "prioritised"]);
+    }
+
+    #[test]
+    fn tag_candidates_drop_refusing_and_non_finite_probes() {
+        let tag = CodecTag::fourcc(b"NANP");
+        let mut reg = CodecRegistry::new();
+        reg.register(info("refuses").probe(|_| 0.0).tag(tag.clone()));
+        reg.register(info("broken").probe(|_| f32::NAN).tag(tag.clone()));
+        reg.register(info("negative").probe(|_| -1.0).tag(tag.clone()));
+        reg.register(info("accepts").probe(|_| 0.2).tag(tag.clone()));
+        let pc = ProbeContext::new(&tag);
+        assert_eq!(tag_ids(&reg.resolve_tag_candidates(&pc)), vec!["accepts"]);
+        assert_eq!(
+            reg.resolve_tag_ref(&pc).map(|c| c.as_str()),
+            Some("accepts")
+        );
+        // An unclaimed tag yields an empty list, not an error.
+        let other = CodecTag::fourcc(b"NONE");
+        assert!(reg
+            .resolve_tag_candidates(&ProbeContext::new(&other))
+            .is_empty());
+    }
+
+    #[test]
+    fn duplicate_tag_claim_by_one_id_is_visible_not_folded() {
+        // The registry contract allows registering one id several
+        // times (multi-implementation codecs). A tag claimed twice by
+        // the same id resolves to that id either way; the candidate
+        // list shows both claims so an audit can flag the redundancy.
+        let tag = CodecTag::fourcc(b"TWIC");
+        let mut reg = CodecRegistry::new();
+        reg.register(info("dup").tag(tag.clone()));
+        reg.register(info("other").tag(tag.clone()));
+        reg.register(info("dup").tag(tag.clone()));
+        let pc = ProbeContext::new(&tag);
+        let cands = reg.resolve_tag_candidates(&pc);
+        assert_eq!(tag_ids(&cands), vec!["dup", "other", "dup"]);
+        assert_eq!(
+            cands.iter().map(|c| c.order).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(reg.resolve_tag_ref(&pc).map(|c| c.as_str()), Some("dup"));
+    }
+
+    #[test]
+    fn magic_priority_beats_registration_order_but_not_length() {
+        let mut reg = CodecRegistry::new();
+        reg.register(info("earlier").payload_magic(b"MAGIC"));
+        reg.register(
+            info("later-preferred")
+                .with_resolution_priority(1)
+                .payload_magic(b"MAGIC"),
+        );
+        reg.register(info("longer").payload_magic(b"MAGICAL"));
+        // Equal-length tie: priority decides.
+        let cands = reg.resolve_payload_magic_candidates(b"MAGIC\x00");
+        assert_eq!(magic_ids(&cands), vec!["later-preferred", "earlier"]);
+        assert_eq!(cands[0].order, 1);
+        assert_eq!(cands[0].magic, b"MAGIC");
+        // A longer matching magic beats both regardless of priority.
+        let cands = reg.resolve_payload_magic_candidates(b"MAGICAL\x00");
+        assert_eq!(
+            magic_ids(&cands),
+            vec!["longer", "later-preferred", "earlier"]
+        );
+        assert_eq!(
+            reg.resolve_payload_magic_ref(b"MAGICAL\x00")
+                .map(|c| c.as_str()),
+            Some("longer")
+        );
+        // Nothing matches: empty list, None.
+        assert!(reg.resolve_payload_magic_candidates(b"other").is_empty());
+        assert!(reg.resolve_payload_magic_ref(b"other").is_none());
+    }
+
+    #[test]
+    fn resolution_priority_is_independent_of_capabilities_priority() {
+        // A registration that ranks itself first as an *implementation*
+        // (HW-style capabilities priority) does not thereby win a tag
+        // tie against a different codec id registered earlier.
+        let tag = CodecTag::fourcc(b"SHRD");
+        let mut reg = CodecRegistry::new();
+        reg.register(info("sw-id").tag(tag.clone()));
+        reg.register(
+            CodecInfo::new(CodecId::new("hw-id"))
+                .capabilities(CodecCapabilities::video("hw-id").with_priority(10))
+                .tag(tag.clone()),
+        );
+        let pc = ProbeContext::new(&tag);
+        assert_eq!(reg.resolve_tag_ref(&pc).map(|c| c.as_str()), Some("sw-id"));
+        let cands = reg.resolve_tag_candidates(&pc);
+        assert!(cands.iter().all(|c| c.priority == crate::DEFAULT_PRIORITY));
     }
 }
 
