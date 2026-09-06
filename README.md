@@ -97,6 +97,12 @@ pure-Rust media framework:
   positional bookkeeping, `write_bytes` and the alias set. Criterion
   baselines live in `benches/primitives.rs` (~1.3 GiB/s read,
   ~430 MiB/s write on a mixed-width field schedule).
+* **`register!`** — the sibling entry-point macro. Expands to
+  `pub fn __oxideav_entry(ctx)` (hidden dispatch plumbing) that
+  `oxideav-meta`'s generated `register_all` calls at the sibling's
+  **crate root** — invoke it in `lib.rs`, or re-export it there
+  (`pub use registry::__oxideav_entry;`) when it lives in a
+  submodule. Contract spelled out in `registry::slice`.
 * **`SourceRegistry`** — URI scheme dispatch for sources. Drivers
   register as one of three shapes — `BytesSource` (file / http), 
   `PacketSource` (transport-layer protocols that pre-demux), or

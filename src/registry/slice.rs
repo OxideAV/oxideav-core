@@ -15,6 +15,42 @@
 //! future (e.g. add a metadata arg, defer init, async-init, audit
 //! hook) — sibling call sites stay untouched.
 //!
+//! # Dispatch contract
+//!
+//! The contract has three fixed parts; the macro body is free to
+//! change as long as they hold:
+//!
+//! 1. **Name and signature.** The expansion is exactly
+//!    `pub fn __oxideav_entry(ctx: &mut RuntimeContext)`. Callers
+//!    (today: `oxideav-meta`'s generated `register_all`) invoke it by
+//!    that name and nothing else.
+//! 2. **Path.** Callers resolve it at the sibling's **crate root** —
+//!    `oxideav_<crate>::__oxideav_entry`. The macro defines the fn in
+//!    the module it is invoked from, so a sibling that invokes it
+//!    inside a submodule (`pub mod registry { … }`) **must re-export
+//!    it from the root**:
+//!
+//!    ```ignore
+//!    // lib.rs
+//!    pub mod registry;
+//!    #[cfg(feature = "registry")]
+//!    pub use registry::__oxideav_entry;
+//!    ```
+//!
+//!    Without the re-export the entry point only resolves at
+//!    `oxideav_<crate>::registry::__oxideav_entry`, and the meta crate
+//!    has to carry a per-sibling path override — a contract leak, not
+//!    a supported layout.
+//! 3. **Effect.** One call installs the sibling's claims into `ctx`
+//!    exactly as the sibling's own `register(ctx)` would; calling it
+//!    twice on one context is the same as calling `register` twice
+//!    (codec ids gain a second implementation entry, container names
+//!    and schemes are replaced in place — see the registry docs).
+//!    Callers invoke it at most once per context.
+//!
+//! The wrapper is `#[doc(hidden)]`: it is dispatch plumbing, not a
+//! sibling's public API, and semver tooling ignores it accordingly.
+//!
 //! # Standalone opt-out
 //!
 //! Each sibling's `register!()` call lives behind that crate's
@@ -39,7 +75,11 @@
 ///
 /// The macro expands to a `pub fn __oxideav_entry(ctx)` wrapper that
 /// invokes the supplied function. `oxideav-meta`'s `register_all`
-/// calls `crate::__oxideav_entry(ctx)` for each enabled sibling dep.
+/// calls `oxideav_<crate>::__oxideav_entry(ctx)` for each enabled
+/// sibling dep — the fn must therefore be reachable at the crate
+/// root; when the macro is invoked in a submodule, add
+/// `pub use <module>::__oxideav_entry;` to `lib.rs` (see the module
+/// docs, "Dispatch contract").
 ///
 /// The display-name argument (first literal) is reserved for future
 /// dispatch-transport changes; it is currently ignored by the
@@ -58,4 +98,73 @@ macro_rules! register {
             $func(ctx);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    //! The dispatch contract, exercised from inside this crate: the
+    //! macro is invoked in a nested module (the layout that bit
+    //! `oxideav-meta`), re-exported one level up, and the entry point
+    //! is called through the re-exported path on a fresh context.
+
+    use crate::{CodecId, CodecInfo, RuntimeContext};
+
+    mod sibling {
+        //! Stand-in for a sibling crate that keeps its registration in
+        //! a `registry` submodule.
+        pub mod registry {
+            use crate::{CodecId, CodecInfo, RuntimeContext};
+
+            pub fn register(ctx: &mut RuntimeContext) {
+                ctx.codecs
+                    .register(CodecInfo::new(CodecId::new("synthetic-entry")));
+                ctx.containers
+                    .register_extension("synth", "synthetic-container");
+            }
+
+            crate::register!("synthetic", register);
+        }
+
+        // The contract's root re-export.
+        pub use registry::__oxideav_entry;
+    }
+
+    #[test]
+    fn entry_point_resolves_at_root_and_installs_claims() {
+        let mut ctx = RuntimeContext::new();
+        // Called exactly the way `register_all` does: by root path.
+        sibling::__oxideav_entry(&mut ctx);
+        assert_eq!(
+            ctx.containers.container_for_extension("synth"),
+            Some("synthetic-container")
+        );
+        // A tag-less, factory-less registration still lands one
+        // registration record (visible via the tag surface being empty
+        // but the id being known to the resolver's bookkeeping).
+        assert!(ctx.codecs.all_tag_registrations().next().is_none());
+        // Same fn object reachable at the nested path — the re-export
+        // aliases, it does not copy.
+        let a: fn(&mut RuntimeContext) = sibling::__oxideav_entry;
+        let b: fn(&mut RuntimeContext) = sibling::registry::__oxideav_entry;
+        assert_eq!(a as usize, b as usize);
+    }
+
+    #[test]
+    fn calling_entry_twice_equals_registering_twice() {
+        fn dec(_p: &crate::CodecParameters) -> crate::Result<Box<dyn crate::Decoder>> {
+            Err(crate::Error::unsupported("dummy"))
+        }
+        pub fn register(ctx: &mut RuntimeContext) {
+            ctx.codecs
+                .register(CodecInfo::new(CodecId::new("twice")).decoder(dec));
+        }
+        crate::register!("twice", register);
+
+        let mut ctx = RuntimeContext::new();
+        __oxideav_entry(&mut ctx);
+        __oxideav_entry(&mut ctx);
+        // Codec ids accumulate implementations (multi-impl contract);
+        // nothing is deduplicated by the wrapper.
+        assert_eq!(ctx.codecs.implementations(&CodecId::new("twice")).len(), 2);
+    }
 }

@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order), `SourceRegistry::schemes` (first-registration order).
   Re-registering a container name or scheme replaces in place and keeps
   its slot.
+- `register!` dispatch contract documented (`registry::slice`): fixed
+  name/signature, **crate-root path** (`oxideav_<crate>::__oxideav_entry`
+  — re-export from `lib.rs` when the macro is invoked in a submodule),
+  and call-twice semantics; pinned by tests that invoke the macro from
+  a nested module. The expansion itself is unchanged.
 
 ## [0.1.35](https://github.com/OxideAV/oxideav-core/compare/v0.1.34...v0.1.35) - 2026-08-20
 
