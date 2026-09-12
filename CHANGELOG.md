@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-core/compare/v0.1.36...v0.2.0) - 2026-09-12
+
+### Other
+
+- release v0.1.36 ([#37](https://github.com/OxideAV/oxideav-core/pull/37))
+- document the register! dispatch contract + pin it with nested-module tests
+- registration-ordered enumerations (names, ids, implementations, tags, schemes)
+- "Resolution order" section in README + crate docs; CHANGELOG [Unreleased]
+- extension-hint resolution priority + extension_candidates
+- codec claim resolution priority + ranked tag / payload-magic candidates
+- deterministic container-probe resolution + probe priority + probe_candidates
+- release v0.1.35 ([#36](https://github.com/OxideAV/oxideav-core/pull/36))
+- 4:4:0 YUV ladder + scene-referred float family + plane-geometry helpers
+- release v0.1.34 ([#35](https://github.com/OxideAV/oxideav-core/pull/35))
+- README + CHANGELOG: r431 pixel-format family-hole audit
+- Ya16Le + CmykInverted — gray+alpha ladder end and the reserved inverted-ink CMYK
+- Gbrap8 — 8-bit planar GBR + alpha (discriminant 58)
+- release v0.1.33 ([#34](https://github.com/OxideAV/oxideav-core/pull/34))
+- generalize codec magic claims — payload_magic replaces the Ogg-named surface
+- README + CHANGELOG: GBR depth-ladder ends, deep 4:2:0 Yuva, Ogg BOS-magic resolution
+- Ogg BOS-magic codec claims + prefix-matched resolution
+- 8/16-bit planar GBR(A) + deep 4:2:0 Yuva pixel formats
+- release v0.1.32 ([#33](https://github.com/OxideAV/oxideav-core/pull/33))
+- threading contract — ExecutionContext::auto() + effective_workers clamp
+- release v0.1.31 ([#32](https://github.com/OxideAV/oxideav-core/pull/32))
+- README + CHANGELOG: deep Yuva formats and the significant-bits side-channel
+- per-plane significant-bits side-channel on VideoFrame
+- add deep alpha-carrying planar YUV (Yuva 4:2:2/4:4:4 at 10/12/16-bit)
+- release v0.1.30 ([#31](https://github.com/OxideAV/oxideav-core/pull/31))
+- reflect 16-bit YUV, Yuva 4:2:2/4:4:4, and the palette side-channel
+- add palette side-channel to VideoFrame
+- add alpha-carrying planar YUV at 4:2:2 and 4:4:4 (Yuva422P/Yuva444P)
+- add 16-bit planar YUV pixel formats (Yuv420P16Le/Yuv422P16Le/Yuv444P16Le)
+- reword a historical entry to describe the GBR plane layout on its own terms
+- README numeric-core/bits/error refresh + CHANGELOG for the r399 hardening round
+- fix all broken intra-doc links — docs.rs-strict (RUSTDOCFLAGS=-D warnings) now clean
+- crate-wide missing_docs sweep + #![warn(missing_docs)] lock-in
+- criterion harness for the hot primitives (bits / rescale / Rational)
+- taxonomy contract docs + constructors and classification predicates
+- LSB reader/writer surface parity with the MSB pair
+- property harness for Rational / rescale / bit-I/O foundations
+- total rescale core — saturate instead of wrap, checked + rounding-mode variants
+- total overflow-safe arithmetic — i64::MIN-safe reduce/neg/abs/cmp + checked_* ops + approximate-instead-of-wrap narrowing
+- add CI / crates.io / docs.rs / MIT-license badges
+- release v0.1.29 ([#30](https://github.com/OxideAV/oxideav-core/pull/30))
+- TimeBase named constants + Timestamp arithmetic + ticks_of inverse
+- drop release-plz.toml — use release-plz defaults across the workspace
+- add PictureType::to_u8/is_known + AttachedPicture builders
+- add flag builders + end_pts accessor
+- release v0.1.28 ([#29](https://github.com/OxideAV/oxideav-core/pull/29))
+- add MultiTitleSource trait + SourceOutput::MultiTitle variant
+- add CodecParameters::language for per-track BCP-47 / ISO 639 tag
+- release v0.1.27 ([#28](https://github.com/OxideAV/oxideav-core/pull/28))
+- add arithmetic ops + value comparison; fix rescale rounding doc
+- release v0.1.26 ([#27](https://github.com/OxideAV/oxideav-core/pull/27))
+- remove tag_for_codec; tags are stream-level via CodecParameters::tag
+- release v0.1.25 ([#26](https://github.com/OxideAV/oxideav-core/pull/26))
+- add CodecResolver::tag_for_codec inverse-lookup
+- release v0.1.24 ([#25](https://github.com/OxideAV/oxideav-core/pull/25))
+- drop linkme, swap macro to wrapper-fn dispatch
+- propagate CodecInfo engine_id + engine_probe to CodecImplementation
+- release v0.1.23 ([#24](https://github.com/OxideAV/oxideav-core/pull/24))
+- collapse assert!(...) layout in device_index tests (rustfmt)
+- add CodecParameters::device_index for HW device selection
+- release v0.1.22 ([#23](https://github.com/OxideAV/oxideav-core/pull/23))
+- add HwDeviceInfo / HwCodecCaps types + CodecInfo engine_id / engine_probe
+- release v0.1.21 ([#22](https://github.com/OxideAV/oxideav-core/pull/22))
+- apply cargo fmt to registry/codec.rs (rustfmt CI fix)
+- trim core API to registration + first-match lookups; selection policy moves to oxideav-pipeline
+- release v0.1.20 ([#21](https://github.com/OxideAV/oxideav-core/pull/21))
+- add require_hardware to disable SW fallback
+- release v0.1.19 ([#20](https://github.com/OxideAV/oxideav-core/pull/20))
+- add Gbrp10/12/14Le + Gbrap10/12/14Le PixelFormat variants
+- release v0.1.18
+- add linkme-based distributed-slice auto-registration (REGISTRARS + register! macro)
+- release v0.1.17
+- add structured chapters() / attachments() API
+- add VectorFrame::default() + small DX wins ([#367](https://github.com/OxideAV/oxideav-core/pull/367))
+- release v0.1.16
+- add Node::SoftMask + MaskKind enum
+- release v0.1.15
+- add Group::cache_key + fix missing Frame::Vector match arm
+- add VectorFrame + SVG-PDF intersection primitives
+- release v0.1.13
+- add Yuv411P (8-bit YUV 4:1:1 planar)
+- drop duplicate semver_check key
+- replace never-match regex with semver_check = false
+- drop enable_miri input (miri now manual-only via workflow_dispatch)
+- release v0.1.12
+- replace int-to-ptr sentinel with aligned static for strict-provenance
+- migrate to centralized OxideAV/.github reusable workflows
+- release v0.1.11
+- fix four UB issues surfaced by miri audit
+- typed-source traits (Bytes / Packets / Frames)
+- Walk back 0.2.0 -> 0.1.10 (yanked)
+
 ## [0.1.36](https://github.com/OxideAV/oxideav-core/compare/v0.1.35...v0.1.36) - 2026-09-06
 
 ### Other
