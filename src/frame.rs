@@ -1,5 +1,6 @@
 //! Uncompressed audio and video frames.
 
+use crate::signal::ColorSignal;
 use crate::subtitle::SubtitleCue;
 use crate::vector::VectorFrame;
 
@@ -81,30 +82,46 @@ pub struct AudioFrame {
 /// cannot be added as new fields without breaking every constructor.
 /// Instead, optional metadata rides in-band as *side-channel* entries at
 /// the tail of `planes`: [`VideoPlane`] values whose shape is impossible
-/// for an image plane, which makes them unambiguous. Two side-channel
-/// record kinds exist, distinguished by their `stride` tag:
+/// for an image plane, which makes them unambiguous. Every record has
+/// non-empty `data` and a `stride` that no image plane can have —
+/// either `0` (an image plane's `data` is `stride × rows` long, so a
+/// zero stride forces empty data) or a value above `isize::MAX`
+/// (`stride × rows` with any non-zero row count would exceed what a
+/// `Vec` can hold). The whole `stride > isize::MAX` band is reserved
+/// for side-channel tags. Three record kinds exist, distinguished by
+/// their `stride` tag:
 ///
-/// - **Palette** — `stride == 0`, non-empty `data`. Impossible for an
-///   image plane because an image plane's `data` is `stride × rows`
-///   long, so a zero stride forces empty data. Carries the color table
-///   for palette-indexed content
+/// - **Palette** — `stride == 0`. Carries the color table for
+///   palette-indexed content
 ///   ([`PixelFormat::Pal8`](crate::PixelFormat::Pal8)); see
 ///   [`palette`](Self::palette) / [`set_palette`](Self::set_palette).
-/// - **Per-plane significant bits** — `stride == usize::MAX`, non-empty
-///   `data`. Impossible for an image plane because `stride × rows`
-///   bytes with any non-zero row count would exceed what a `Vec` can
-///   hold. Carries mixed per-plane bit depths (e.g. 12-bit luma with
-///   10-bit chroma from a wavelet codec's custom signal range); see
+/// - **Per-plane significant bits** — `stride == usize::MAX`. Carries
+///   mixed per-plane bit depths (e.g. 12-bit luma with 10-bit chroma
+///   from a wavelet codec's custom signal range); see
 ///   [`significant_bits`](Self::significant_bits) /
 ///   [`set_significant_bits`](Self::set_significant_bits).
+/// - **Colour signal** — `stride == usize::MAX - 1`. Carries a
+///   [`ColorSignal`] (sample range + H.273 primaries / transfer /
+///   matrix) for producers whose signal is per-picture or that have no
+///   stream object to put it on; see
+///   [`color_signal`](Self::color_signal) /
+///   [`set_color_signal`](Self::set_color_signal).
 ///
-/// The two records compose: a frame can carry both at once, in either
+/// The records compose: a frame can carry any subset at once, in any
 /// order, within the trailing run of side-channel-shaped entries. The
 /// typed accessors find each record by its `stride` tag regardless of
 /// order, and [`image_planes`](Self::image_planes) /
 /// [`image_plane_count`](Self::image_plane_count) exclude the whole
 /// trailing run. Frames without any attached side-channel are
 /// byte-for-byte identical to what they always were.
+///
+/// Consumers that index `planes` directly (rather than through
+/// [`image_planes`](Self::image_planes)) see the records as extra
+/// trailing entries; producers attaching a record to every frame of a
+/// stream should therefore prefer the stream-level home
+/// ([`CodecParameters`](crate::CodecParameters)) for data that does not
+/// vary per picture, and attach per-frame records when the value is
+/// genuinely per-picture or no stream object exists.
 #[derive(Clone, Debug)]
 pub struct VideoFrame {
     /// Presentation timestamp in the stream's time base; `None` if unknown.
@@ -112,7 +129,8 @@ pub struct VideoFrame {
     /// One entry per plane (e.g., 3 for Yuv420P). Each entry is `(stride, bytes)`.
     ///
     /// May additionally end with side-channel entries (palette,
-    /// per-plane significant bits — see the type-level docs). Code that
+    /// per-plane significant bits, colour signal — see the type-level
+    /// docs). Code that
     /// wants only pixel planes should iterate
     /// [`image_planes`](Self::image_planes) instead of this field.
     pub planes: Vec<VideoPlane>,
@@ -122,12 +140,21 @@ pub struct VideoFrame {
 /// (The palette record's tag is `0`; see the [`VideoFrame`] docs.)
 const SIGNIFICANT_BITS_STRIDE: usize = usize::MAX;
 
+/// `stride` tag of the colour-signal side-channel record.
+const COLOR_SIGNAL_STRIDE: usize = usize::MAX - 1;
+
+/// Smallest `stride` value that is impossible for an image plane with
+/// at least one row: `stride × rows` would exceed `isize::MAX`, the
+/// largest allocation a `Vec` can hold. Every non-zero side-channel
+/// tag lives at or above this value.
+const SIDE_CHANNEL_STRIDE_FLOOR: usize = isize::MAX as usize + 1;
+
 impl VideoFrame {
-    /// `true` when `plane` has a side-channel record shape: one of the
-    /// two impossible-for-an-image-plane sentinels described in the
-    /// type-level docs.
+    /// `true` when `plane` has a side-channel record shape: non-empty
+    /// data with an impossible-for-an-image-plane stride (`0`, or any
+    /// value above `isize::MAX`) as described in the type-level docs.
     fn is_side_channel_entry(plane: &VideoPlane) -> bool {
-        (plane.stride == 0 || plane.stride == SIGNIFICANT_BITS_STRIDE) && !plane.data.is_empty()
+        (plane.stride == 0 || plane.stride >= SIDE_CHANNEL_STRIDE_FLOOR) && !plane.data.is_empty()
     }
 
     /// Index of the first entry of the trailing side-channel run — equal
@@ -306,8 +333,50 @@ impl VideoFrame {
         self.remove_side_channel(SIGNIFICANT_BITS_STRIDE)
     }
 
+    /// The frame's attached colour-signal description, if any.
+    ///
+    /// Decoded from the colour-signal side-channel record (see the
+    /// type-level docs; wire form in [`ColorSignal::to_bytes`]). A
+    /// per-frame description refines the stream-level
+    /// [`CodecParameters::color_signal`](crate::CodecParameters::color_signal):
+    /// consumers resolve `frame.color_signal().unwrap_or_default()
+    /// .or(params.color_signal)` and then apply their own policy to
+    /// whatever is still unspecified. A malformed (too short) record
+    /// reads as `None`.
+    pub fn color_signal(&self) -> Option<ColorSignal> {
+        self.side_channel_index(COLOR_SIGNAL_STRIDE)
+            .and_then(|i| ColorSignal::from_bytes(&self.planes[i].data))
+    }
+
+    /// Attach (or replace) the frame's colour-signal side-channel.
+    /// Other side-channel records are unaffected.
+    pub fn set_color_signal(&mut self, signal: ColorSignal) {
+        self.remove_side_channel(COLOR_SIGNAL_STRIDE);
+        self.planes.push(VideoPlane {
+            stride: COLOR_SIGNAL_STRIDE,
+            data: signal.to_bytes().to_vec(),
+        });
+    }
+
+    /// Builder-style counterpart to
+    /// [`set_color_signal`](Self::set_color_signal) for construction
+    /// chains: `VideoFrame { pts, planes }.with_color_signal(sig)`.
+    pub fn with_color_signal(mut self, signal: ColorSignal) -> Self {
+        self.set_color_signal(signal);
+        self
+    }
+
+    /// Detach and return the frame's colour-signal side-channel, if
+    /// any. Afterwards the frame carries no colour signal (other
+    /// records are left in place).
+    pub fn take_color_signal(&mut self) -> Option<ColorSignal> {
+        self.remove_side_channel(COLOR_SIGNAL_STRIDE)
+            .and_then(|d| ColorSignal::from_bytes(&d))
+    }
+
     /// The frame's image planes — `planes` with the trailing
-    /// side-channel entries (palette, significant bits) excluded.
+    /// side-channel entries (palette, significant bits, colour signal)
+    /// excluded.
     /// Prefer this over indexing `planes` directly in code that
     /// handles side-channel-capable frames.
     pub fn image_planes(&self) -> &[VideoPlane] {
@@ -326,10 +395,10 @@ impl VideoFrame {
 /// One plane of a [`VideoFrame`]: row-major sample bytes plus the
 /// stride between rows.
 ///
-/// An entry with non-empty `data` and a `stride` of `0` or `usize::MAX`
-/// is not an image plane: it is a side-channel record (palette and
-/// per-plane significant bits respectively) described on [`VideoFrame`]
-/// — only meaningful within the trailing run of `VideoFrame::planes`.
+/// An entry with non-empty `data` and a `stride` of `0` or above
+/// `isize::MAX` is not an image plane: it is a side-channel record
+/// (palette, per-plane significant bits, colour signal) described on [`VideoFrame`] — only meaningful within the trailing
+/// run of `VideoFrame::planes`.
 #[derive(Clone, Debug)]
 pub struct VideoPlane {
     /// Bytes per row in `data`.
@@ -626,6 +695,149 @@ mod tests {
         if let Frame::Video(v) = wrapped {
             assert_eq!(v.palette(), Some(&[1, 2, 3][..]));
             assert_eq!(v.significant_bits(), Some(&[6][..]));
+        } else {
+            unreachable!("wrapped as Video above");
+        }
+    }
+
+    #[test]
+    fn frame_without_color_signal_reports_none() {
+        let f = gray_frame();
+        assert_eq!(f.color_signal(), None);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn set_color_signal_round_trips_and_keeps_image_planes_intact() {
+        let mut f = gray_frame();
+        let sig = ColorSignal::from_code_points(9, 16, 9, true);
+        f.set_color_signal(sig);
+        assert_eq!(f.color_signal(), Some(sig));
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.image_planes()[0].data.len(), 8);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.planes[1].stride, usize::MAX - 1);
+        assert_eq!(f.planes[1].data, sig.to_bytes());
+
+        // Replacement, not stacking.
+        f.set_color_signal(ColorSignal::srgb());
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
+
+        // Detach.
+        assert_eq!(f.take_color_signal(), Some(ColorSignal::srgb()));
+        assert_eq!(f.color_signal(), None);
+        assert_eq!(f.take_color_signal(), None);
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn all_three_side_channels_compose_in_any_order() {
+        let sig = ColorSignal::bt709_limited();
+        let mut f = gray_frame()
+            .with_palette(vec![1, 2, 3])
+            .with_color_signal(sig)
+            .with_significant_bits(vec![8]);
+        assert_eq!(f.planes.len(), 4);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.palette(), Some(&[1, 2, 3][..]));
+        assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.color_signal(), Some(sig));
+
+        // Replacing one record from the middle of the run leaves the
+        // others in place.
+        f.set_color_signal(ColorSignal::srgb());
+        assert_eq!(f.planes.len(), 4);
+        assert_eq!(f.palette(), Some(&[1, 2, 3][..]));
+        assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
+
+        // Detaching in an arbitrary order.
+        assert_eq!(f.take_palette(), Some(vec![1, 2, 3]));
+        assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
+        assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.take_color_signal(), Some(ColorSignal::srgb()));
+        assert_eq!(f.take_significant_bits(), Some(vec![8]));
+        assert_eq!(f.planes.len(), 1);
+        assert_eq!(f.image_plane_count(), 1);
+    }
+
+    #[test]
+    fn huge_stride_empty_plane_is_not_a_side_channel() {
+        // Any stride in the reserved band with EMPTY data stays an
+        // (degenerate) image plane — sentinels require non-empty data.
+        let f = VideoFrame {
+            pts: None,
+            planes: vec![
+                VideoPlane {
+                    stride: 4,
+                    data: vec![0u8; 8],
+                },
+                VideoPlane {
+                    stride: usize::MAX - 1,
+                    data: Vec::new(),
+                },
+                VideoPlane {
+                    stride: usize::MAX - 2,
+                    data: Vec::new(),
+                },
+            ],
+        };
+        assert_eq!(f.color_signal(), None);
+        assert_eq!(f.image_plane_count(), 3);
+    }
+
+    #[test]
+    fn largest_real_stride_is_still_an_image_plane() {
+        // isize::MAX is the largest stride a one-row plane can have;
+        // it must not be classified as a side-channel tag.
+        let f = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: isize::MAX as usize,
+                data: vec![0u8; 1],
+            }],
+        };
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.color_signal(), None);
+    }
+
+    #[test]
+    fn malformed_short_records_read_as_none() {
+        let f = VideoFrame {
+            pts: None,
+            planes: vec![
+                VideoPlane {
+                    stride: 4,
+                    data: vec![0u8; 8],
+                },
+                VideoPlane {
+                    stride: usize::MAX - 1,
+                    data: vec![1, 2],
+                },
+                VideoPlane {
+                    stride: usize::MAX - 2,
+                    data: vec![0; 5],
+                },
+            ],
+        };
+        // They are side-channel-shaped (excluded from the image planes)
+        // but decode to nothing.
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.color_signal(), None);
+    }
+
+    #[test]
+    fn color_signal_survives_clone_and_frame_wrapping() {
+        let sig = ColorSignal::from_code_points(1, 13, 0, true);
+        let f = gray_frame().with_color_signal(sig);
+        let cloned = f.clone();
+        assert_eq!(cloned.color_signal(), Some(sig));
+        let wrapped = Frame::Video(cloned);
+        assert_eq!(wrapped.pts(), Some(7));
+        if let Frame::Video(v) = wrapped {
+            assert_eq!(v.color_signal(), Some(sig));
         } else {
             unreachable!("wrapped as Video above");
         }

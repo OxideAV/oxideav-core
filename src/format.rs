@@ -505,11 +505,19 @@ pub enum PixelFormat {
     Yuv444P12Le = 21,
 
     // --- Full-range ("J") YUV ---
-    /// JPEG/full-range YUV 4:2:0 planar.
+    //
+    // Legacy labels: the range is part of the format name. Every other
+    // format leaves the range to the stream's / frame's colour signal
+    // (`CodecParameters::color_signal`, `VideoFrame::color_signal`);
+    // see `implied_color_range`.
+    /// JPEG/full-range YUV 4:2:0 planar. Implies
+    /// [`ColorRange::Full`](crate::ColorRange::Full).
     YuvJ420P = 22,
-    /// JPEG/full-range YUV 4:2:2 planar.
+    /// JPEG/full-range YUV 4:2:2 planar. Implies
+    /// [`ColorRange::Full`](crate::ColorRange::Full).
     YuvJ422P = 23,
-    /// JPEG/full-range YUV 4:4:4 planar.
+    /// JPEG/full-range YUV 4:4:4 planar. Implies
+    /// [`ColorRange::Full`](crate::ColorRange::Full).
     YuvJ444P = 24,
 
     // --- Semi-planar YUV ---
@@ -861,6 +869,29 @@ impl PixelFormat {
                 | Self::GbrpF32Le
                 | Self::GbrapF32Le
         )
+    }
+
+    /// The sample range this format's *label* commits to, if any.
+    ///
+    /// Only the three legacy full-range labels (`YuvJ420P`, `YuvJ422P`,
+    /// `YuvJ444P`) carry a range in their name and return
+    /// `Some(Full)`. Every other format — limited-range-by-convention
+    /// `Yuv*`, every >8-bit and alpha-bearing Y′CbCr surface, RGB and
+    /// grey — returns `None`: their range is a property of the signal,
+    /// not of the storage layout, and lives in
+    /// [`ColorSignal::range`](crate::ColorSignal::range) on the stream
+    /// ([`CodecParameters::color_signal`](crate::CodecParameters::color_signal))
+    /// or frame ([`VideoFrame::color_signal`](crate::VideoFrame::color_signal)).
+    /// Use
+    /// [`CodecParameters::resolved_color_range`](crate::CodecParameters::resolved_color_range)
+    /// for the combined answer (explicit signal first, then this label).
+    pub fn implied_color_range(&self) -> Option<crate::signal::ColorRange> {
+        match self {
+            Self::YuvJ420P | Self::YuvJ422P | Self::YuvJ444P => {
+                Some(crate::signal::ColorRange::Full)
+            }
+            _ => None,
+        }
     }
 
     /// True if the format is a palette index format (`Pal8`).
@@ -1313,6 +1344,32 @@ mod tests {
     /// the public ABI. Any reorder, renumber, or removal will fail this test
     /// and the change MUST be a major version bump (or a fresh variant
     /// appended at a new number, leaving the existing ones untouched).
+    #[test]
+    fn implied_color_range_is_full_only_for_the_j_labels() {
+        use crate::signal::ColorRange;
+        for f in [
+            PixelFormat::YuvJ420P,
+            PixelFormat::YuvJ422P,
+            PixelFormat::YuvJ444P,
+        ] {
+            assert_eq!(f.implied_color_range(), Some(ColorRange::Full), "{f:?}");
+        }
+        for f in [
+            PixelFormat::Yuv420P,
+            PixelFormat::Yuv444P,
+            PixelFormat::Yuv420P10Le,
+            PixelFormat::Yuv444P12Le,
+            PixelFormat::Rgb24,
+            PixelFormat::Rgba,
+            PixelFormat::Gray8,
+            PixelFormat::Gray16Le,
+            PixelFormat::Nv12,
+            PixelFormat::Pal8,
+        ] {
+            assert_eq!(f.implied_color_range(), None, "{f:?}");
+        }
+    }
+
     #[test]
     fn pixel_format_discriminants_pinned() {
         assert_eq!(PixelFormat::Yuv420P as u16, 0);

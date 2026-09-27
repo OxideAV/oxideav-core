@@ -21,11 +21,13 @@ pure-Rust media framework:
   significant-bits record for mixed depths no single `PixelFormat`
   names — e.g. 12-bit luma with 10-bit chroma from a custom signal
   range (`significant_bits()` / `set_significant_bits` /
-  `take_significant_bits`, LSB-anchored values). The two records
-  compose on one frame; `image_planes()` iterates pixel data
-  side-channel-agnostically.
+  `take_significant_bits`, LSB-anchored values) and a colour-signal
+  record (`color_signal()` / `set_color_signal` / `take_color_signal`).
+  The records compose on one frame; `image_planes()` iterates pixel
+  data side-channel-agnostically. See [Colour signal](#colour-signal).
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
-  what a decoder / encoder consumes.
+  what a decoder / encoder consumes, including the stream's
+  `color_signal`.
 * **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
   stream; timestamps are integers in that base. Named constants
   (`MILLIS` / `MICROS` / `NANOS` / `MPEG_TS` / `AUDIO_48K` / `AUDIO_44K1`
@@ -121,6 +123,58 @@ at the crate root, promoted to deny by CI's clippy gate) and
 `cargo doc` is warning-clean under docs.rs-strict settings.
 
 Zero C dependencies. Zero FFI. Zero `*-sys` crates.
+
+## Colour signal
+
+A `PixelFormat` says how samples are laid out; it does not say what
+the values mean. `ColorSignal` (module `signal`) carries the
+coding-independent description of Rec. ITU-T H.273 | ISO/IEC 23091-2:
+
+| field       | type                      | H.273 name                |
+|-------------|---------------------------|---------------------------|
+| `range`     | `ColorRange`              | `VideoFullRangeFlag` (+ `Unspecified`) |
+| `primaries` | `ColorPrimaries(u8)`      | `ColourPrimaries`         |
+| `transfer`  | `TransferCharacteristics(u8)` | `TransferCharacteristics` |
+| `matrix`    | `MatrixCoefficients(u8)`  | `MatrixCoefficients`      |
+
+The three code points are raw 8-bit newtypes with named constants for
+every value H.273 (07/2024) defines (`ColorPrimaries::BT2020`,
+`TransferCharacteristics::SMPTE_ST2084`, `MatrixCoefficients::BT709`,
+…); reserved values pass through unchanged. Every field defaults to
+*unspecified* (code point 2 / `ColorRange::Unspecified`) and the crate
+never substitutes a guess — `ColorSignal::or(fallback)` layers one
+description over another field-wise, and consumers apply their own
+policy to what remains open.
+
+Where it lives:
+
+* **Stream** — `CodecParameters::color_signal` (default unspecified),
+  set with `with_color_signal` / `with_color_range`. Demuxers fill it
+  from the container's colour record (an ISOBMFF `colr` box, a
+  Matroska `Colour` element, …), decoders from the bitstream's own
+  signalling when the container had none, encoders in
+  `output_params()` so muxers know what to write.
+* **Frame** — `VideoFrame::color_signal()` / `set_color_signal` /
+  `with_color_signal` / `take_color_signal`, an in-band side-channel
+  record (`stride == usize::MAX - 1`) for producers whose signal is
+  per-picture or that have no stream object (a still-image item, an
+  auxiliary alpha image whose range differs from its master). A frame
+  record refines the stream value:
+  `frame.color_signal().unwrap_or_default().or(params.color_signal)`.
+* **Pixel-format labels** — only the legacy `YuvJ420P` / `YuvJ422P` /
+  `YuvJ444P` labels commit to a range (`PixelFormat::implied_color_range`
+  → `Full`). Every other format, including every >8-bit and
+  alpha-bearing surface, leaves the range to the signal.
+  `CodecParameters::resolved_color_range()` combines the two: explicit
+  signal first, then the label, else `Unspecified`. Converters should
+  read that instead of inferring range from the format name — a 10-bit
+  full-range stream on `Yuv420P10Le` and an 8-bit alpha plane on
+  `Gray8` are only expressible this way.
+
+The feature is strictly additive: no existing field, signature or
+variant changed, `VideoFrame` remains constructible by struct literal,
+and `CodecParameters` gained its field behind its existing
+`#[non_exhaustive]` marker.
 
 ## Resolution order
 

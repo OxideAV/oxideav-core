@@ -49,6 +49,7 @@ pub mod packet;
 pub mod picture;
 pub mod rational;
 pub mod registry;
+pub mod signal;
 pub mod stream;
 pub mod subtitle;
 pub mod time;
@@ -79,6 +80,9 @@ pub use registry::{
     PacketSource, PayloadMagicCandidate, ProbeCandidate, ProbeData, ProbeScore, ReadSeek,
     RuntimeContext, SourceOutput, SourceRegistry, TagCandidate, WriteSeek, MAX_PROBE_SCORE,
     PROBE_SCORE_EXTENSION,
+};
+pub use signal::{
+    ColorPrimaries, ColorRange, ColorSignal, MatrixCoefficients, TransferCharacteristics,
 };
 pub use stream::{
     CodecId, CodecParameters, CodecResolver, CodecTag, Confidence, NullCodecResolver, ProbeContext,

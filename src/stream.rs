@@ -4,6 +4,7 @@ use crate::format::{ChannelLayout, MediaType, PixelFormat, SampleFormat};
 use crate::limits::DecoderLimits;
 use crate::options::CodecOptions;
 use crate::rational::Rational;
+use crate::signal::{ColorRange, ColorSignal};
 use crate::time::TimeBase;
 
 /// A stable identifier for a codec. Codec crates register a `CodecId` so the
@@ -439,6 +440,27 @@ pub struct CodecParameters {
     /// caller-visible tag byte-for-byte. No validation is performed
     /// here — the value is whatever string the producer supplied.
     pub language: Option<String>,
+
+    /// Video: the stream's colour-signal description — sample range
+    /// plus the H.273 colour primaries / transfer characteristics /
+    /// matrix coefficients. See [`crate::signal`] for the semantics.
+    ///
+    /// Defaults to [`ColorSignal::unspecified`] (every field open).
+    /// Set by the **producer**: a demuxer from the container's colour
+    /// record (an ISOBMFF `colr` box, a Matroska `Colour` element, …),
+    /// a decoder from the bitstream's own signalling when the
+    /// container had none, an encoder in `output_params()` to tell the
+    /// muxer what to write. Consumers (colour converters, renderers,
+    /// muxers) read it through
+    /// [`resolved_color_range`](Self::resolved_color_range) and the
+    /// fields directly; a per-frame
+    /// [`VideoFrame::color_signal`](crate::VideoFrame::color_signal)
+    /// record, when present, refines this stream-level value.
+    ///
+    /// Not compared by [`matches_core`](Self::matches_core): like
+    /// `extradata`, it is descriptive metadata that a lossless copy
+    /// may legitimately rewrite.
+    pub color_signal: ColorSignal,
 }
 
 impl CodecParameters {
@@ -465,6 +487,7 @@ impl CodecParameters {
             device_index: None,
             tag: None,
             language: None,
+            color_signal: ColorSignal::unspecified(),
         }
     }
 
@@ -508,6 +531,7 @@ impl CodecParameters {
             device_index: None,
             tag: None,
             language: None,
+            color_signal: ColorSignal::unspecified(),
         }
     }
 
@@ -534,6 +558,7 @@ impl CodecParameters {
             device_index: None,
             tag: None,
             language: None,
+            color_signal: ColorSignal::unspecified(),
         }
     }
 
@@ -559,6 +584,7 @@ impl CodecParameters {
             device_index: None,
             tag: None,
             language: None,
+            color_signal: ColorSignal::unspecified(),
         }
     }
 
@@ -674,6 +700,49 @@ impl CodecParameters {
     pub fn with_language(mut self, language: impl Into<String>) -> Self {
         self.language = Some(language.into());
         self
+    }
+
+    /// Builder method: set the stream's
+    /// [`color_signal`](Self::color_signal).
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters, ColorRange, ColorSignal, PixelFormat};
+    /// // A 10-bit full-range BT.2020 PQ stream, as a container's colour
+    /// // record describes it (primaries 9, transfer 16, matrix 9).
+    /// let mut p = CodecParameters::video(CodecId::new("h265"))
+    ///     .with_color_signal(ColorSignal::from_code_points(9, 16, 9, true));
+    /// p.pixel_format = Some(PixelFormat::Yuv420P10Le);
+    /// assert_eq!(p.resolved_color_range(), ColorRange::Full);
+    /// ```
+    pub fn with_color_signal(mut self, signal: ColorSignal) -> Self {
+        self.color_signal = signal;
+        self
+    }
+
+    /// Builder method: set only the sample range of the stream's
+    /// [`color_signal`](Self::color_signal), leaving the H.273 triple
+    /// as it was. For producers that know the range (an alpha plane is
+    /// full range; a container flag said so) but nothing else.
+    pub fn with_color_range(mut self, range: ColorRange) -> Self {
+        self.color_signal.range = range;
+        self
+    }
+
+    /// The stream's effective sample range: the explicit
+    /// [`color_signal`](Self::color_signal) range when specified,
+    /// otherwise the range implied by the
+    /// [`pixel_format`](Self::pixel_format) label
+    /// ([`PixelFormat::implied_color_range`] — `Full` for the `YuvJ*`
+    /// formats), otherwise [`ColorRange::Unspecified`]. Converters
+    /// apply their own policy to `Unspecified` (H.273 suggests limited
+    /// for video imagery).
+    pub fn resolved_color_range(&self) -> ColorRange {
+        if !self.color_signal.range.is_unspecified() {
+            return self.color_signal.range;
+        }
+        self.pixel_format
+            .and_then(|f| f.implied_color_range())
+            .unwrap_or(ColorRange::Unspecified)
     }
 }
 
@@ -918,5 +987,78 @@ mod codec_parameters_language_tests {
         let tag = String::from("fre");
         let p = CodecParameters::audio(CodecId::new("aac")).with_language(tag);
         assert_eq!(p.language.as_deref(), Some("fre"));
+    }
+}
+
+#[cfg(test)]
+mod codec_parameters_color_signal_tests {
+    use super::*;
+    use crate::signal::{ColorPrimaries, MatrixCoefficients, TransferCharacteristics};
+
+    #[test]
+    fn color_signal_defaults_to_unspecified_on_every_constructor() {
+        for p in [
+            CodecParameters::audio(CodecId::new("aac")),
+            CodecParameters::video(CodecId::new("h264")),
+            CodecParameters::subtitle(CodecId::new("srt")),
+            CodecParameters::data(CodecId::new("bin")),
+        ] {
+            assert!(p.color_signal.is_unspecified());
+            assert_eq!(p.color_signal, ColorSignal::default());
+            assert_eq!(p.resolved_color_range(), ColorRange::Unspecified);
+        }
+    }
+
+    #[test]
+    fn with_color_signal_sets_field_and_survives_clone() {
+        let sig = ColorSignal::from_code_points(9, 16, 9, false);
+        let p = CodecParameters::video(CodecId::new("h265")).with_color_signal(sig);
+        assert_eq!(p.color_signal, sig);
+        assert_eq!(p.resolved_color_range(), ColorRange::Limited);
+        let c = p.clone();
+        assert_eq!(c.color_signal, sig);
+    }
+
+    #[test]
+    fn with_color_range_touches_only_the_range() {
+        let p = CodecParameters::video(CodecId::new("h265"))
+            .with_color_signal(ColorSignal::bt709_limited())
+            .with_color_range(ColorRange::Full);
+        assert_eq!(p.color_signal.range, ColorRange::Full);
+        assert_eq!(p.color_signal.primaries, ColorPrimaries::BT709);
+        assert_eq!(p.color_signal.transfer, TransferCharacteristics::BT709);
+        assert_eq!(p.color_signal.matrix, MatrixCoefficients::BT709);
+    }
+
+    #[test]
+    fn resolved_range_prefers_explicit_signal_over_pixel_format_label() {
+        // Label only: YuvJ ⇒ Full.
+        let mut p = CodecParameters::video(CodecId::new("mjpeg"));
+        p.pixel_format = Some(PixelFormat::YuvJ420P);
+        assert_eq!(p.resolved_color_range(), ColorRange::Full);
+        // Limited label with no signal ⇒ unspecified (not a guess).
+        p.pixel_format = Some(PixelFormat::Yuv420P);
+        assert_eq!(p.resolved_color_range(), ColorRange::Unspecified);
+        // 10-bit full-range signal on a non-J label ⇒ Full — the case
+        // the labels alone cannot express.
+        p.pixel_format = Some(PixelFormat::Yuv420P10Le);
+        p.color_signal.range = ColorRange::Full;
+        assert_eq!(p.resolved_color_range(), ColorRange::Full);
+        // An explicit Limited signal wins even over a J label.
+        p.pixel_format = Some(PixelFormat::YuvJ444P);
+        p.color_signal.range = ColorRange::Limited;
+        assert_eq!(p.resolved_color_range(), ColorRange::Limited);
+        // Alpha as Gray8 with an explicit full range.
+        p.pixel_format = Some(PixelFormat::Gray8);
+        p.color_signal.range = ColorRange::Full;
+        assert_eq!(p.resolved_color_range(), ColorRange::Full);
+    }
+
+    #[test]
+    fn matches_core_ignores_color_signal() {
+        let a = CodecParameters::video(CodecId::new("h265"));
+        let b = a.clone().with_color_signal(ColorSignal::srgb());
+        assert!(a.matches_core(&b));
+        assert!(b.matches_core(&a));
     }
 }

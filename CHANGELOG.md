@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Colour-signal description** (`oxideav_core::signal`, re-exported at
+  the root): `ColorSignal { range, primaries, transfer, matrix }` with
+  `ColorRange { Unspecified, Limited, Full }` and the three H.273 |
+  ISO/IEC 23091-2 code points as raw-`u8` newtypes
+  (`ColorPrimaries`, `TransferCharacteristics`, `MatrixCoefficients`)
+  carrying named constants for every value the 07/2024 edition
+  defines; reserved values round-trip untouched. Constructors
+  `new` / `from_code_points` / `unspecified` / `srgb` /
+  `bt709_limited`, `with_*` builders, `is_unspecified`, field-wise
+  `or(fallback)`, a fixed 4-byte `to_bytes` / `from_bytes` wire form,
+  `Display`. `Default` is fully unspecified.
+- `CodecParameters::color_signal` (new field on the `#[non_exhaustive]`
+  struct, default unspecified) + `with_color_signal` /
+  `with_color_range` builders and `resolved_color_range()` (explicit
+  signal, then the pixel-format label, else `Unspecified`). Not part of
+  `matches_core`.
+- `PixelFormat::implied_color_range()` — `Some(Full)` for the legacy
+  `YuvJ420P` / `YuvJ422P` / `YuvJ444P` labels, `None` for every other
+  format (their range is a property of the signal, not the layout).
+- `VideoFrame::color_signal()` / `set_color_signal` /
+  `with_color_signal` / `take_color_signal` — a third in-band
+  side-channel record (`stride == usize::MAX - 1`) so per-picture
+  colour signalling rides on frames without changing the
+  struct-literal-constructible `VideoFrame`.
+- Side-channel classification generalised: any `VideoPlane` with
+  non-empty data and a stride above `isize::MAX` (impossible for an
+  image plane) is a side-channel record, so future record tags need no
+  classifier change. `stride == isize::MAX` with one row is still an
+  image plane.
+
+All of the above is additive — no removed / renamed / re-typed item,
+no new required trait method, no new field on a struct constructible
+by literal outside the crate (`cargo semver-checks` against 0.1.36:
+223 checks pass in `--release-type patch` mode).
+
 ## [0.1.36](https://github.com/OxideAV/oxideav-core/compare/v0.1.35...v0.1.36) - 2026-09-06
 
 ### Other
