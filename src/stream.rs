@@ -1,6 +1,7 @@
 //! Stream metadata shared between containers and codecs.
 
 use crate::format::{ChannelLayout, MediaType, PixelFormat, SampleFormat};
+use crate::layer::LayerInfo;
 use crate::limits::DecoderLimits;
 use crate::options::CodecOptions;
 use crate::rational::Rational;
@@ -461,6 +462,15 @@ pub struct CodecParameters {
     /// `extradata`, it is descriptive metadata that a lossless copy
     /// may legitimately rewrite.
     pub color_signal: ColorSignal,
+
+    /// Video: description of the stream's layers for multi-layer /
+    /// multi-view content (scalable or multi-view coding, auxiliary
+    /// alpha / depth layers). Empty — the default — for single-layer
+    /// streams and for producers that do not describe the structure.
+    /// See [`crate::layer`] for the semantics and
+    /// [`VideoFrame::layer`](crate::VideoFrame::layer) for the
+    /// per-frame identity that pairs with it.
+    pub layers: Vec<LayerInfo>,
 }
 
 impl CodecParameters {
@@ -488,6 +498,7 @@ impl CodecParameters {
             tag: None,
             language: None,
             color_signal: ColorSignal::unspecified(),
+            layers: Vec::new(),
         }
     }
 
@@ -532,6 +543,7 @@ impl CodecParameters {
             tag: None,
             language: None,
             color_signal: ColorSignal::unspecified(),
+            layers: Vec::new(),
         }
     }
 
@@ -559,6 +571,7 @@ impl CodecParameters {
             tag: None,
             language: None,
             color_signal: ColorSignal::unspecified(),
+            layers: Vec::new(),
         }
     }
 
@@ -585,6 +598,7 @@ impl CodecParameters {
             tag: None,
             language: None,
             color_signal: ColorSignal::unspecified(),
+            layers: Vec::new(),
         }
     }
 
@@ -743,6 +757,39 @@ impl CodecParameters {
         self.pixel_format
             .and_then(|f| f.implied_color_range())
             .unwrap_or(ColorRange::Unspecified)
+    }
+
+    /// Builder method: replace the stream's [`layers`](Self::layers)
+    /// description.
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters, LayerInfo};
+    /// // A stereo pair: base layer = left view, layer 1 = right view
+    /// // predicted from the base.
+    /// let p = CodecParameters::video(CodecId::new("h265")).with_layers(vec![
+    ///     LayerInfo::new(0).with_view_id(0),
+    ///     LayerInfo::new(1).with_view_id(1).with_depends_on([0u16]),
+    /// ]);
+    /// assert_eq!(p.layers.len(), 2);
+    /// assert_eq!(p.layer(1).and_then(|l| l.view_id), Some(1));
+    /// assert!(p.is_multi_layer());
+    /// ```
+    pub fn with_layers(mut self, layers: Vec<LayerInfo>) -> Self {
+        self.layers = layers;
+        self
+    }
+
+    /// The description of layer `layer_id`, when
+    /// [`layers`](Self::layers) lists it.
+    pub fn layer(&self, layer_id: u16) -> Option<&LayerInfo> {
+        self.layers.iter().find(|l| l.layer_id == layer_id)
+    }
+
+    /// `true` when [`layers`](Self::layers) describes more than one
+    /// layer. Single-layer streams (and streams whose structure is not
+    /// described) report `false`.
+    pub fn is_multi_layer(&self) -> bool {
+        self.layers.len() > 1
     }
 }
 
@@ -1006,6 +1053,9 @@ mod codec_parameters_color_signal_tests {
             assert!(p.color_signal.is_unspecified());
             assert_eq!(p.color_signal, ColorSignal::default());
             assert_eq!(p.resolved_color_range(), ColorRange::Unspecified);
+            assert!(p.layers.is_empty());
+            assert!(!p.is_multi_layer());
+            assert!(p.layer(0).is_none());
         }
     }
 
@@ -1055,10 +1105,36 @@ mod codec_parameters_color_signal_tests {
     }
 
     #[test]
-    fn matches_core_ignores_color_signal() {
+    fn matches_core_ignores_color_signal_and_layers() {
         let a = CodecParameters::video(CodecId::new("h265"));
-        let b = a.clone().with_color_signal(ColorSignal::srgb());
+        let b = a
+            .clone()
+            .with_color_signal(ColorSignal::srgb())
+            .with_layers(vec![LayerInfo::new(0), LayerInfo::new(1)]);
         assert!(a.matches_core(&b));
         assert!(b.matches_core(&a));
+    }
+
+    #[test]
+    fn layers_builder_lookup_and_clone() {
+        let p = CodecParameters::video(CodecId::new("h265")).with_layers(vec![
+            LayerInfo::new(0).with_view_id(0),
+            LayerInfo::new(1).with_view_id(1).with_depends_on([0u16]),
+            LayerInfo::new(2).with_depends_on(vec![0, 1]),
+        ]);
+        assert!(p.is_multi_layer());
+        assert_eq!(p.layer(0).map(|l| l.view_id), Some(Some(0)));
+        assert_eq!(
+            p.layer(1).map(|l| l.depends_on.as_slice()),
+            Some(&[0u16][..])
+        );
+        assert_eq!(p.layer(2).map(|l| l.depends_on.len()), Some(2));
+        assert!(p.layer(3).is_none());
+        let c = p.clone();
+        assert_eq!(c.layers, p.layers);
+        // A single described layer is not "multi-layer".
+        let single =
+            CodecParameters::video(CodecId::new("h265")).with_layers(vec![LayerInfo::new(0)]);
+        assert!(!single.is_multi_layer());
     }
 }

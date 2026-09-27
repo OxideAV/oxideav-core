@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   side-channel record (`stride == usize::MAX - 1`) so per-picture
   colour signalling rides on frames without changing the
   struct-literal-constructible `VideoFrame`.
+- **Layer / view identity** (`oxideav_core::layer`, re-exported at the
+  root) for scalable and multi-view video: `LayerIdentity
+  { layer_id: u16, view_id: Option<u16>, access_unit: Option<u64> }`
+  (`new` / `base` / `with_view_id` / `with_access_unit` /
+  `is_base_layer`, 13-byte `to_bytes` / `from_bytes`, `Display`) and
+  the stream-level `LayerInfo { layer_id, view_id, depends_on }`
+  (`new` / `with_view_id` / `with_depends_on` / `identity`).
+- `VideoFrame::layer()` / `layer_or_base()` / `set_layer` /
+  `with_layer` / `take_layer` — a fourth side-channel record
+  (`stride == usize::MAX - 2`) tagging a decoded frame with its layer.
+- `CodecParameters::layers: Vec<LayerInfo>` (new field, default empty)
+  + `with_layers` / `layer(id)` / `is_multi_layer()`.
 - Side-channel classification generalised: any `VideoPlane` with
   non-empty data and a stride above `isize::MAX` (impossible for an
   image plane) is a side-channel record, so future record tags need no

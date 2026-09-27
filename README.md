@@ -21,13 +21,16 @@ pure-Rust media framework:
   significant-bits record for mixed depths no single `PixelFormat`
   names — e.g. 12-bit luma with 10-bit chroma from a custom signal
   range (`significant_bits()` / `set_significant_bits` /
-  `take_significant_bits`, LSB-anchored values) and a colour-signal
-  record (`color_signal()` / `set_color_signal` / `take_color_signal`).
-  The records compose on one frame; `image_planes()` iterates pixel
-  data side-channel-agnostically. See [Colour signal](#colour-signal).
+  `take_significant_bits`, LSB-anchored values), a colour-signal
+  record (`color_signal()` / `set_color_signal` / `take_color_signal`)
+  and a layer / view identity (`layer()` / `set_layer` /
+  `take_layer`). The records compose on one frame; `image_planes()`
+  iterates pixel data side-channel-agnostically. See
+  [Colour signal](#colour-signal) and
+  [Layers and views](#layers-and-views).
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes, including the stream's
-  `color_signal`.
+  `color_signal` and its `layers` description.
 * **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
   stream; timestamps are integers in that base. Named constants
   (`MILLIS` / `MICROS` / `NANOS` / `MPEG_TS` / `AUDIO_48K` / `AUDIO_44K1`
@@ -171,9 +174,32 @@ Where it lives:
   full-range stream on `Yuv420P10Le` and an 8-bit alpha plane on
   `Gray8` are only expressible this way.
 
-The feature is strictly additive: no existing field, signature or
+## Layers and views
+
+Scalable and multi-view coding (spatial / quality / view scalability in
+H.264 Annexes G–H, H.265 / H.266 Annex F, AV1 operating points, …) put
+more than one layer of pictures in one stream. Module `layer` gives
+that structure a codec-neutral shape; identifiers are the codec's own
+values passed through verbatim, `0` is the base layer.
+
+* **Per frame** — `LayerIdentity { layer_id: u16, view_id: Option<u16>,
+  access_unit: Option<u64> }`, attached by the decoder through
+  `VideoFrame::set_layer` / `with_layer` and read with
+  `VideoFrame::layer()` (or `layer_or_base()`, which reads `None` as
+  the base layer). It is an in-band side-channel record
+  (`stride == usize::MAX - 2`); single-layer decoders attach nothing and
+  their frames are byte-for-byte unchanged. `access_unit` lets a
+  consumer regroup the per-layer frames of one presentation instant.
+* **Per stream** — `CodecParameters::layers: Vec<LayerInfo>` with
+  `LayerInfo { layer_id, view_id, depends_on }`, set with `with_layers`
+  and queried with `layer(id)` / `is_multi_layer()`. Empty for
+  single-layer streams. A container that exposes an operating point or
+  a single view filters on these ids and must feed every layer reachable
+  through `depends_on`; a stereo renderer routes frames by `view_id`.
+
+Both features are strictly additive: no existing field, signature or
 variant changed, `VideoFrame` remains constructible by struct literal,
-and `CodecParameters` gained its field behind its existing
+and `CodecParameters` gained its two fields behind its existing
 `#[non_exhaustive]` marker.
 
 ## Resolution order

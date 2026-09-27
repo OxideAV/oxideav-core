@@ -1,5 +1,6 @@
 //! Uncompressed audio and video frames.
 
+use crate::layer::LayerIdentity;
 use crate::signal::ColorSignal;
 use crate::subtitle::SubtitleCue;
 use crate::vector::VectorFrame;
@@ -88,7 +89,7 @@ pub struct AudioFrame {
 /// zero stride forces empty data) or a value above `isize::MAX`
 /// (`stride × rows` with any non-zero row count would exceed what a
 /// `Vec` can hold). The whole `stride > isize::MAX` band is reserved
-/// for side-channel tags. Three record kinds exist, distinguished by
+/// for side-channel tags. Four record kinds exist, distinguished by
 /// their `stride` tag:
 ///
 /// - **Palette** — `stride == 0`. Carries the color table for
@@ -106,6 +107,10 @@ pub struct AudioFrame {
 ///   stream object to put it on; see
 ///   [`color_signal`](Self::color_signal) /
 ///   [`set_color_signal`](Self::set_color_signal).
+/// - **Layer identity** — `stride == usize::MAX - 2`. Carries a
+///   [`LayerIdentity`] (layer / view / access-unit) for frames of
+///   multi-layer or multi-view streams; see [`layer`](Self::layer) /
+///   [`set_layer`](Self::set_layer).
 ///
 /// The records compose: a frame can carry any subset at once, in any
 /// order, within the trailing run of side-channel-shaped entries. The
@@ -129,8 +134,8 @@ pub struct VideoFrame {
     /// One entry per plane (e.g., 3 for Yuv420P). Each entry is `(stride, bytes)`.
     ///
     /// May additionally end with side-channel entries (palette,
-    /// per-plane significant bits, colour signal — see the type-level
-    /// docs). Code that
+    /// per-plane significant bits, colour signal, layer identity — see
+    /// the type-level docs). Code that
     /// wants only pixel planes should iterate
     /// [`image_planes`](Self::image_planes) instead of this field.
     pub planes: Vec<VideoPlane>,
@@ -142,6 +147,9 @@ const SIGNIFICANT_BITS_STRIDE: usize = usize::MAX;
 
 /// `stride` tag of the colour-signal side-channel record.
 const COLOR_SIGNAL_STRIDE: usize = usize::MAX - 1;
+
+/// `stride` tag of the layer-identity side-channel record.
+const LAYER_IDENTITY_STRIDE: usize = usize::MAX - 2;
 
 /// Smallest `stride` value that is impossible for an image plane with
 /// at least one row: `stride × rows` would exceed `isize::MAX`, the
@@ -374,9 +382,54 @@ impl VideoFrame {
             .and_then(|d| ColorSignal::from_bytes(&d))
     }
 
+    /// The frame's attached layer / view identity, if any.
+    ///
+    /// Decoded from the layer-identity side-channel record (see the
+    /// type-level docs; wire form in [`LayerIdentity::to_bytes`]).
+    /// Single-layer decoders attach nothing; consumers treat `None` as
+    /// "base layer, no view". A malformed (too short) record reads as
+    /// `None`.
+    pub fn layer(&self) -> Option<LayerIdentity> {
+        self.side_channel_index(LAYER_IDENTITY_STRIDE)
+            .and_then(|i| LayerIdentity::from_bytes(&self.planes[i].data))
+    }
+
+    /// The frame's layer identity, or the base layer when none is
+    /// attached. Sugar over [`layer`](Self::layer) for consumers that
+    /// handle single- and multi-layer streams alike.
+    pub fn layer_or_base(&self) -> LayerIdentity {
+        self.layer().unwrap_or_default()
+    }
+
+    /// Attach (or replace) the frame's layer-identity side-channel.
+    /// Other side-channel records are unaffected.
+    pub fn set_layer(&mut self, layer: LayerIdentity) {
+        self.remove_side_channel(LAYER_IDENTITY_STRIDE);
+        self.planes.push(VideoPlane {
+            stride: LAYER_IDENTITY_STRIDE,
+            data: layer.to_bytes().to_vec(),
+        });
+    }
+
+    /// Builder-style counterpart to [`set_layer`](Self::set_layer) for
+    /// construction chains:
+    /// `VideoFrame { pts, planes }.with_layer(LayerIdentity::new(1))`.
+    pub fn with_layer(mut self, layer: LayerIdentity) -> Self {
+        self.set_layer(layer);
+        self
+    }
+
+    /// Detach and return the frame's layer-identity side-channel, if
+    /// any. Afterwards the frame carries no layer identity (other
+    /// records are left in place).
+    pub fn take_layer(&mut self) -> Option<LayerIdentity> {
+        self.remove_side_channel(LAYER_IDENTITY_STRIDE)
+            .and_then(|d| LayerIdentity::from_bytes(&d))
+    }
+
     /// The frame's image planes — `planes` with the trailing
-    /// side-channel entries (palette, significant bits, colour signal)
-    /// excluded.
+    /// side-channel entries (palette, significant bits, colour signal,
+    /// layer identity) excluded.
     /// Prefer this over indexing `planes` directly in code that
     /// handles side-channel-capable frames.
     pub fn image_planes(&self) -> &[VideoPlane] {
@@ -397,7 +450,8 @@ impl VideoFrame {
 ///
 /// An entry with non-empty `data` and a `stride` of `0` or above
 /// `isize::MAX` is not an image plane: it is a side-channel record
-/// (palette, per-plane significant bits, colour signal) described on [`VideoFrame`] — only meaningful within the trailing
+/// (palette, per-plane significant bits, colour signal, layer identity)
+/// described on [`VideoFrame`] — only meaningful within the trailing
 /// run of `VideoFrame::planes`.
 #[derive(Clone, Debug)]
 pub struct VideoPlane {
@@ -701,9 +755,11 @@ mod tests {
     }
 
     #[test]
-    fn frame_without_color_signal_reports_none() {
+    fn frame_without_color_signal_or_layer_reports_none() {
         let f = gray_frame();
         assert_eq!(f.color_signal(), None);
+        assert_eq!(f.layer(), None);
+        assert_eq!(f.layer_or_base(), LayerIdentity::base());
         assert_eq!(f.image_plane_count(), 1);
         assert_eq!(f.planes.len(), 1);
     }
@@ -733,27 +789,53 @@ mod tests {
     }
 
     #[test]
-    fn all_three_side_channels_compose_in_any_order() {
+    fn set_layer_round_trips_and_keeps_image_planes_intact() {
+        let mut f = gray_frame();
+        let id = LayerIdentity::new(1).with_view_id(1).with_access_unit(9);
+        f.set_layer(id);
+        assert_eq!(f.layer(), Some(id));
+        assert_eq!(f.layer_or_base(), id);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.planes[1].stride, usize::MAX - 2);
+
+        f.set_layer(LayerIdentity::new(2));
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.layer(), Some(LayerIdentity::new(2)));
+
+        assert_eq!(f.take_layer(), Some(LayerIdentity::new(2)));
+        assert_eq!(f.layer(), None);
+        assert_eq!(f.take_layer(), None);
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn all_four_side_channels_compose_in_any_order() {
         let sig = ColorSignal::bt709_limited();
+        let id = LayerIdentity::new(1).with_view_id(1);
         let mut f = gray_frame()
+            .with_layer(id)
             .with_palette(vec![1, 2, 3])
             .with_color_signal(sig)
             .with_significant_bits(vec![8]);
-        assert_eq!(f.planes.len(), 4);
+        assert_eq!(f.planes.len(), 5);
         assert_eq!(f.image_plane_count(), 1);
         assert_eq!(f.palette(), Some(&[1, 2, 3][..]));
         assert_eq!(f.significant_bits(), Some(&[8][..]));
         assert_eq!(f.color_signal(), Some(sig));
+        assert_eq!(f.layer(), Some(id));
 
         // Replacing one record from the middle of the run leaves the
         // others in place.
         f.set_color_signal(ColorSignal::srgb());
-        assert_eq!(f.planes.len(), 4);
+        assert_eq!(f.planes.len(), 5);
         assert_eq!(f.palette(), Some(&[1, 2, 3][..]));
         assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.layer(), Some(id));
         assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
 
         // Detaching in an arbitrary order.
+        assert_eq!(f.take_layer(), Some(id));
         assert_eq!(f.take_palette(), Some(vec![1, 2, 3]));
         assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
         assert_eq!(f.significant_bits(), Some(&[8][..]));
@@ -785,6 +867,7 @@ mod tests {
             ],
         };
         assert_eq!(f.color_signal(), None);
+        assert_eq!(f.layer(), None);
         assert_eq!(f.image_plane_count(), 3);
     }
 
@@ -801,6 +884,7 @@ mod tests {
         };
         assert_eq!(f.image_plane_count(), 1);
         assert_eq!(f.color_signal(), None);
+        assert_eq!(f.layer(), None);
     }
 
     #[test]
@@ -826,18 +910,22 @@ mod tests {
         // but decode to nothing.
         assert_eq!(f.image_plane_count(), 1);
         assert_eq!(f.color_signal(), None);
+        assert_eq!(f.layer(), None);
     }
 
     #[test]
-    fn color_signal_survives_clone_and_frame_wrapping() {
+    fn color_signal_and_layer_survive_clone_and_frame_wrapping() {
         let sig = ColorSignal::from_code_points(1, 13, 0, true);
-        let f = gray_frame().with_color_signal(sig);
+        let id = LayerIdentity::new(1).with_view_id(1).with_access_unit(3);
+        let f = gray_frame().with_color_signal(sig).with_layer(id);
         let cloned = f.clone();
         assert_eq!(cloned.color_signal(), Some(sig));
+        assert_eq!(cloned.layer(), Some(id));
         let wrapped = Frame::Video(cloned);
         assert_eq!(wrapped.pts(), Some(7));
         if let Frame::Video(v) = wrapped {
             assert_eq!(v.color_signal(), Some(sig));
+            assert_eq!(v.layer(), Some(id));
         } else {
             unreachable!("wrapped as Video above");
         }
