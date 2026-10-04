@@ -3,8 +3,8 @@
 //! An [`ExecutionContext`] carries advisory information — today only a
 //! thread budget — that codecs can use to tune their internal
 //! parallelism. Codecs that don't care can ignore it; the default trait
-//! method on [`Decoder`](../../oxideav_codec/trait.Decoder.html) /
-//! [`Encoder`](../../oxideav_codec/trait.Encoder.html) is a no-op.
+//! method on [`Decoder`](crate::Decoder) /
+//! [`Encoder`](crate::Encoder) is a no-op.
 //!
 //! # Threading contract
 //!
