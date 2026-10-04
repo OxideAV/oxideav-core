@@ -20,7 +20,7 @@
 
 use std::fmt;
 
-use crate::format::{MediaType, PixelFormat};
+use crate::format::{MediaType, PixelFormat, SampleFormat};
 
 /// Default priority for software implementations. Lower numbers are preferred
 /// at resolution time, so register hardware impls with a smaller value (e.g.
@@ -71,6 +71,18 @@ pub struct CodecCapabilities {
     /// populated, the registry can skip impls whose accepted set does not
     /// include the format requested by the caller.
     pub accepted_pixel_formats: Vec<PixelFormat>,
+    /// Audio sample rates (Hz) this implementation accepts as encoder
+    /// input (audio only). An empty `Vec` means "any rate". When
+    /// populated, a pipeline feeding the encoder is expected to resample
+    /// a stream whose rate is not listed to one of these rates (the
+    /// listed order is not a preference — consumers pick the closest
+    /// rate that does not discard bandwidth).
+    pub accepted_sample_rates: Vec<u32>,
+    /// Audio sample formats this implementation accepts as encoder input
+    /// (audio only). An empty `Vec` means "any format". When populated,
+    /// the first entry is the preferred conversion target for a stream
+    /// whose format is not listed.
+    pub accepted_sample_formats: Vec<SampleFormat>,
 }
 
 impl CodecCapabilities {
@@ -93,6 +105,8 @@ impl CodecCapabilities {
             max_channels: None,
             priority: DEFAULT_PRIORITY,
             accepted_pixel_formats: Vec::new(),
+            accepted_sample_rates: Vec::new(),
+            accepted_sample_formats: Vec::new(),
         }
     }
 
@@ -115,6 +129,8 @@ impl CodecCapabilities {
             max_channels: None,
             priority: DEFAULT_PRIORITY,
             accepted_pixel_formats: Vec::new(),
+            accepted_sample_rates: Vec::new(),
+            accepted_sample_formats: Vec::new(),
         }
     }
 
@@ -210,6 +226,44 @@ impl CodecCapabilities {
         self.accepted_pixel_formats = fmts;
         self
     }
+
+    /// Replace the accepted encoder-input sample-rate set wholesale
+    /// (see [`Self::accepted_sample_rates`]).
+    pub fn with_sample_rates(mut self, rates: Vec<u32>) -> Self {
+        self.accepted_sample_rates = rates;
+        self
+    }
+
+    /// Replace the accepted encoder-input sample-format set wholesale
+    /// (see [`Self::accepted_sample_formats`]; the first entry is the
+    /// preferred conversion target).
+    pub fn with_sample_formats(mut self, fmts: Vec<SampleFormat>) -> Self {
+        self.accepted_sample_formats = fmts;
+        self
+    }
+
+    /// Pick the encoder-input sample rate for a stream at `rate` Hz:
+    /// `rate` itself when it is accepted (or every rate is), otherwise
+    /// the smallest accepted rate above it (no bandwidth is lost), and
+    /// failing that the largest accepted rate.
+    pub fn pick_sample_rate(&self, rate: u32) -> u32 {
+        if self.accepted_sample_rates.is_empty() || self.accepted_sample_rates.contains(&rate) {
+            return rate;
+        }
+        let above = self
+            .accepted_sample_rates
+            .iter()
+            .copied()
+            .filter(|&r| r > rate)
+            .min();
+        above.unwrap_or_else(|| {
+            self.accepted_sample_rates
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(rate)
+        })
+    }
 }
 
 impl fmt::Display for CodecCapabilities {
@@ -253,5 +307,32 @@ impl CodecCapabilities {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pick_sample_rate_prefers_exact_then_next_above_then_max() {
+        let any = CodecCapabilities::audio("any");
+        assert_eq!(any.pick_sample_rate(44_100), 44_100);
+        let opus = CodecCapabilities::audio("opus")
+            .with_sample_rates(vec![8_000, 12_000, 16_000, 24_000, 48_000]);
+        assert_eq!(opus.pick_sample_rate(16_000), 16_000);
+        assert_eq!(opus.pick_sample_rate(44_100), 48_000);
+        assert_eq!(opus.pick_sample_rate(11_025), 12_000);
+        assert_eq!(opus.pick_sample_rate(96_000), 48_000);
+    }
+
+    #[test]
+    fn sample_format_builder_replaces_set() {
+        let c = CodecCapabilities::audio("x")
+            .with_sample_formats(vec![SampleFormat::S16, SampleFormat::F32]);
+        assert_eq!(
+            c.accepted_sample_formats,
+            vec![SampleFormat::S16, SampleFormat::F32]
+        );
     }
 }
