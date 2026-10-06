@@ -35,6 +35,7 @@
 
 pub mod arena;
 pub mod bits;
+pub mod blob;
 pub mod capabilities;
 pub mod engine;
 pub mod error;
@@ -56,6 +57,7 @@ pub mod subtitle;
 pub mod time;
 pub mod vector;
 
+pub use blob::{BlobKind, MetadataBlob};
 pub use capabilities::{CodecCapabilities, DEFAULT_PRIORITY};
 pub use engine::{EngineProbeFn, HwCodecCaps, HwDeviceInfo};
 pub use error::{Error, Result};

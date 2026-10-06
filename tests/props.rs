@@ -552,6 +552,95 @@ fn video_frame_side_channels_match_three_option_model() {
     }
 }
 
+// ==================== Metadata blob wire form ====================
+
+/// Random blob lists (random kinds — well-known and custom, including
+/// empty and non-ASCII names — optional mimes, random payloads up to a
+/// few KiB) round-trip through `encode_blobs` / `decode_blobs`
+/// byte-exactly, the frame side-channel reports the same list, and no
+/// proper prefix of the wire form decodes (a truncated record is
+/// unreadable, never a shorter list).
+#[test]
+fn metadata_blob_wire_form_round_trips_and_rejects_every_prefix() {
+    use oxideav_core::blob::{decode_blobs, encode_blobs};
+    use oxideav_core::{BlobKind, MetadataBlob, VideoFrame, VideoPlane};
+
+    let long = "x".repeat(300);
+    let names = [
+        "",
+        "icc",
+        "exif",
+        "cover-art",
+        "png-text",
+        "ünïcödé",
+        long.as_str(),
+    ];
+    let mut rng = Lcg::new(0xB10B);
+    for _ in 0..300 {
+        let count = (rng.next_u64() % 5) as usize;
+        let blobs: Vec<MetadataBlob> = (0..count)
+            .map(|_| {
+                let kind = match rng.next_u64() % 3 {
+                    0 => BlobKind::WELL_KNOWN[rng.next_u64() as usize % 5].clone(),
+                    _ => BlobKind::custom(names[rng.next_u64() as usize % names.len()]),
+                };
+                let len = match rng.next_u64() % 4 {
+                    0 => 0,
+                    1 => (rng.next_u64() % 8) as usize,
+                    _ => (rng.next_u64() % 3000) as usize,
+                };
+                let data: Vec<u8> = (0..len).map(|_| rng.next_u64() as u8).collect();
+                let b = MetadataBlob::new(kind, data);
+                if rng.next_u64() % 2 == 0 {
+                    b.with_mime(names[rng.next_u64() as usize % names.len()])
+                } else {
+                    b
+                }
+            })
+            .collect();
+
+        let wire = encode_blobs(&blobs);
+        assert_eq!(decode_blobs(&wire).as_ref(), Some(&blobs));
+        assert_eq!(wire.is_empty(), blobs.is_empty());
+
+        // Through a frame: one record, image planes untouched.
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 2,
+                data: vec![0, 0, 0, 0],
+            }],
+        }
+        .with_blobs(blobs.clone());
+        assert_eq!(frame.blobs(), blobs);
+        assert_eq!(frame.image_plane_count(), 1);
+        assert_eq!(frame.planes.len(), 1 + usize::from(!blobs.is_empty()));
+        for b in &blobs {
+            assert_eq!(
+                frame.blob(&b.kind).as_ref(),
+                blobs.iter().find(|x| x.kind == b.kind)
+            );
+        }
+
+        // A handful of random proper prefixes, plus the shortest ones,
+        // all fail to decode.
+        if wire.len() > 1 {
+            for cut in [1usize, 2, 7, 8, 9, wire.len() - 1]
+                .into_iter()
+                .chain((0..8).map(|_| 1 + rng.next_u64() as usize % (wire.len() - 1)))
+                .filter(|&c| c < wire.len())
+            {
+                assert_eq!(
+                    decode_blobs(&wire[..cut]),
+                    None,
+                    "prefix {cut} of {}",
+                    wire.len()
+                );
+            }
+        }
+    }
+}
+
 // ==================== PixelFormat plane geometry ====================
 
 /// Every `PixelFormat` variant, in discriminant order (mirrors the

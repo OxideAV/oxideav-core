@@ -1,5 +1,6 @@
 //! Uncompressed audio and video frames.
 
+use crate::blob::{decode_blobs, encode_blobs, BlobKind, MetadataBlob};
 use crate::layer::LayerIdentity;
 use crate::signal::ColorSignal;
 use crate::subtitle::SubtitleCue;
@@ -89,7 +90,7 @@ pub struct AudioFrame {
 /// zero stride forces empty data) or a value above `isize::MAX`
 /// (`stride × rows` with any non-zero row count would exceed what a
 /// `Vec` can hold). The whole `stride > isize::MAX` band is reserved
-/// for side-channel tags. Five record kinds exist, distinguished by
+/// for side-channel tags. Six record kinds exist, distinguished by
 /// their `stride` tag:
 ///
 /// - **Palette** — `stride == 0`. Carries the color table for
@@ -120,6 +121,14 @@ pub struct AudioFrame {
 ///   [`LayerIdentity`] (layer / view / access-unit) for frames of
 ///   multi-layer or multi-view streams; see [`layer`](Self::layer) /
 ///   [`set_layer`](Self::set_layer).
+/// - **Metadata blobs** — `stride == usize::MAX - 4`. Carries a list
+///   of [`MetadataBlob`]s (ICC profile, Exif, XMP, … — see
+///   [`crate::blob`]) for pictures whose metadata is per-picture: a
+///   multi-page TIFF's per-page Exif, HEIF burst items with their own
+///   profile. Wire form [`encode_blobs`] / [`decode_blobs`]; see
+///   [`blobs`](Self::blobs) / [`set_blobs`](Self::set_blobs). A blob
+///   that applies to the whole stream belongs on
+///   [`CodecParameters::blobs`](crate::CodecParameters::blobs) instead.
 ///
 /// The records compose: a frame can carry any subset at once, in any
 /// order, within the trailing run of side-channel-shaped entries. The
@@ -143,8 +152,8 @@ pub struct VideoFrame {
     /// One entry per plane (e.g., 3 for Yuv420P). Each entry is `(stride, bytes)`.
     ///
     /// May additionally end with side-channel entries (palette, palette
-    /// alpha, per-plane significant bits, colour signal, layer identity
-    /// — see the type-level docs). Code that
+    /// alpha, per-plane significant bits, colour signal, layer identity,
+    /// metadata blobs — see the type-level docs). Code that
     /// wants only pixel planes should iterate
     /// [`image_planes`](Self::image_planes) instead of this field.
     pub planes: Vec<VideoPlane>,
@@ -162,6 +171,9 @@ const LAYER_IDENTITY_STRIDE: usize = usize::MAX - 2;
 
 /// `stride` tag of the palette-alpha side-channel record.
 const PALETTE_ALPHA_STRIDE: usize = usize::MAX - 3;
+
+/// `stride` tag of the metadata-blobs side-channel record.
+const BLOBS_STRIDE: usize = usize::MAX - 4;
 
 /// Smallest `stride` value that is impossible for an image plane with
 /// at least one row: `stride × rows` would exceed `isize::MAX`, the
@@ -554,9 +566,79 @@ impl VideoFrame {
             .and_then(|d| LayerIdentity::from_bytes(&d))
     }
 
+    /// The frame's attached metadata blobs, decoded from the blobs
+    /// side-channel record (see the type-level docs; wire form in
+    /// [`encode_blobs`]). Empty when no record is attached — and when
+    /// the record is malformed, so a consumer never sees half a list.
+    /// Decodes on every call: read it once per frame.
+    ///
+    /// A per-frame blob refines the stream-level
+    /// [`CodecParameters::blobs`](crate::CodecParameters::blobs) of
+    /// the same kind: resolve
+    /// `frame.blob(&k).or_else(|| params.blob(&k).cloned())`.
+    pub fn blobs(&self) -> Vec<MetadataBlob> {
+        self.side_channel_index(BLOBS_STRIDE)
+            .and_then(|i| decode_blobs(&self.planes[i].data))
+            .unwrap_or_default()
+    }
+
+    /// The first attached blob of `kind`, if any (see
+    /// [`blobs`](Self::blobs)).
+    pub fn blob(&self, kind: &BlobKind) -> Option<MetadataBlob> {
+        self.blobs().into_iter().find(|b| b.is(kind))
+    }
+
+    /// Attach (or replace) the frame's metadata-blobs side-channel
+    /// with `blobs`, in the given order. An empty list removes any
+    /// attached record instead (the sentinel requires non-empty data).
+    /// Other side-channel records are unaffected.
+    pub fn set_blobs(&mut self, blobs: Vec<MetadataBlob>) {
+        self.remove_side_channel(BLOBS_STRIDE);
+        if !blobs.is_empty() {
+            self.planes.push(VideoPlane {
+                stride: BLOBS_STRIDE,
+                data: encode_blobs(&blobs),
+            });
+        }
+    }
+
+    /// Append one blob to the frame's metadata-blobs record (creating
+    /// it when absent; a malformed existing record is replaced by the
+    /// single new blob). Blobs of the same kind are kept in insertion
+    /// order; nothing is replaced.
+    pub fn push_blob(&mut self, blob: MetadataBlob) {
+        let mut blobs = self.blobs();
+        blobs.push(blob);
+        self.set_blobs(blobs);
+    }
+
+    /// Builder-style counterpart to [`push_blob`](Self::push_blob) for
+    /// construction chains:
+    /// `VideoFrame { pts, planes }.with_blob(MetadataBlob::new(BlobKind::EXIF, exif))`.
+    pub fn with_blob(mut self, blob: MetadataBlob) -> Self {
+        self.push_blob(blob);
+        self
+    }
+
+    /// Builder-style counterpart to [`set_blobs`](Self::set_blobs).
+    pub fn with_blobs(mut self, blobs: Vec<MetadataBlob>) -> Self {
+        self.set_blobs(blobs);
+        self
+    }
+
+    /// Detach and return the frame's metadata blobs, if any (empty for
+    /// no record or a malformed one — which is removed all the same).
+    /// Afterwards the frame carries no blobs record (other records are
+    /// left in place).
+    pub fn take_blobs(&mut self) -> Vec<MetadataBlob> {
+        self.remove_side_channel(BLOBS_STRIDE)
+            .and_then(|d| decode_blobs(&d))
+            .unwrap_or_default()
+    }
+
     /// The frame's image planes — `planes` with the trailing
     /// side-channel entries (palette, palette alpha, significant bits,
-    /// colour signal, layer identity) excluded.
+    /// colour signal, layer identity, metadata blobs) excluded.
     /// Prefer this over indexing `planes` directly in code that
     /// handles side-channel-capable frames.
     pub fn image_planes(&self) -> &[VideoPlane] {
@@ -578,7 +660,8 @@ impl VideoFrame {
 /// An entry with non-empty `data` and a `stride` of `0` or above
 /// `isize::MAX` is not an image plane: it is a side-channel record
 /// (palette, palette alpha, per-plane significant bits, colour signal,
-/// layer identity) described on [`VideoFrame`] — only meaningful within the trailing
+/// layer identity, metadata blobs) described on [`VideoFrame`] — only
+/// meaningful within the trailing
 /// run of `VideoFrame::planes`.
 #[derive(Clone, Debug)]
 pub struct VideoPlane {
@@ -1286,6 +1369,177 @@ mod tests {
         if let Frame::Video(v) = wrapped {
             assert_eq!(v.palette_rgba(0), Some([1, 2, 3, 0]));
             assert_eq!(v.palette_rgba(1), Some([4, 5, 6, 255]));
+        } else {
+            unreachable!("wrapped as Video above");
+        }
+    }
+
+    #[test]
+    fn frame_without_blobs_reads_empty() {
+        let f = gray_frame();
+        assert!(f.blobs().is_empty());
+        assert_eq!(f.blob(&BlobKind::ICC), None);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn set_blobs_round_trips_and_keeps_image_planes_intact() {
+        let icc = MetadataBlob::new(BlobKind::ICC, vec![1, 2, 3, 4]);
+        let exif = MetadataBlob::new(BlobKind::EXIF, b"II*\0".to_vec());
+        let mut f = gray_frame();
+        f.set_blobs(vec![icc.clone(), exif.clone()]);
+
+        assert_eq!(f.blobs(), vec![icc.clone(), exif.clone()]);
+        assert_eq!(f.blob(&BlobKind::ICC), Some(icc.clone()));
+        assert_eq!(f.blob(&BlobKind::EXIF), Some(exif.clone()));
+        assert_eq!(f.blob(&BlobKind::XMP), None);
+        // Image-plane view is unchanged; the raw field sees one record
+        // holding the whole list, tagged usize::MAX - 4.
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.image_planes()[0].data.len(), 8);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.planes[1].stride, usize::MAX - 4);
+        assert_eq!(f.planes[1].data, encode_blobs(&[icc.clone(), exif.clone()]));
+
+        // Replacement, not stacking.
+        f.set_blobs(vec![exif.clone()]);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.blobs(), vec![exif.clone()]);
+
+        // Empty input removes the record entirely.
+        f.set_blobs(Vec::new());
+        assert!(f.blobs().is_empty());
+        assert_eq!(f.planes.len(), 1);
+
+        // take_blobs detaches and returns the list.
+        f.set_blobs(vec![icc.clone()]);
+        assert_eq!(f.take_blobs(), vec![icc]);
+        assert!(f.blobs().is_empty());
+        assert!(f.take_blobs().is_empty());
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn push_blob_appends_in_order_and_with_blob_chains() {
+        let a = MetadataBlob::new(BlobKind::COVER_ART, vec![1]).with_mime("image/jpeg");
+        let b = MetadataBlob::new(BlobKind::COVER_ART, vec![2]).with_mime("image/png");
+        let c = MetadataBlob::new(BlobKind::custom("exr-attributes"), vec![3]);
+        let mut f = gray_frame().with_blob(a.clone());
+        f.push_blob(b.clone());
+        f.push_blob(c.clone());
+        // Same kind twice: both kept, first-of-kind lookup is stable.
+        assert_eq!(f.blobs(), vec![a.clone(), b.clone(), c.clone()]);
+        assert_eq!(f.blob(&BlobKind::COVER_ART), Some(a));
+        assert_eq!(f.blob(&BlobKind::custom("exr-attributes")), Some(c));
+        // Still one record.
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.image_plane_count(), 1);
+    }
+
+    #[test]
+    fn malformed_blobs_record_reads_empty_and_is_replaced_by_push() {
+        let mut f = VideoFrame {
+            pts: None,
+            planes: vec![
+                VideoPlane {
+                    stride: 4,
+                    data: vec![0u8; 8],
+                },
+                VideoPlane {
+                    stride: usize::MAX - 4,
+                    data: vec![9, 9, 9],
+                },
+            ],
+        };
+        // Side-channel-shaped (excluded from the image planes) but
+        // decodes to nothing.
+        assert_eq!(f.image_plane_count(), 1);
+        assert!(f.blobs().is_empty());
+        assert_eq!(f.blob(&BlobKind::ICC), None);
+        // push replaces the unreadable record with the single new blob.
+        let icc = MetadataBlob::new(BlobKind::ICC, vec![7]);
+        f.push_blob(icc.clone());
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.blobs(), vec![icc]);
+        // take on a malformed record removes it and reports empty.
+        f.planes[1].data = vec![9, 9, 9];
+        assert!(f.take_blobs().is_empty());
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn blobs_tag_with_empty_data_is_not_a_record() {
+        let f = VideoFrame {
+            pts: None,
+            planes: vec![
+                VideoPlane {
+                    stride: 4,
+                    data: vec![0u8; 8],
+                },
+                VideoPlane {
+                    stride: usize::MAX - 4,
+                    data: Vec::new(),
+                },
+            ],
+        };
+        assert!(f.blobs().is_empty());
+        assert_eq!(f.image_plane_count(), 2);
+    }
+
+    #[test]
+    fn all_six_side_channels_compose_in_any_order() {
+        let sig = ColorSignal::bt709_limited();
+        let id = LayerIdentity::new(1).with_view_id(1);
+        let icc = MetadataBlob::new(BlobKind::ICC, vec![1, 2, 3]);
+        let xmp = MetadataBlob::new(BlobKind::XMP, b"<x/>".to_vec());
+        let mut f = gray_frame()
+            .with_blob(icc.clone())
+            .with_palette_alpha(vec![0])
+            .with_layer(id)
+            .with_palette(vec![1, 2, 3, 4, 5, 6])
+            .with_color_signal(sig)
+            .with_significant_bits(vec![8]);
+        assert_eq!(f.planes.len(), 7);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.blobs(), vec![icc.clone()]);
+        assert_eq!(f.palette_rgba(0), Some([1, 2, 3, 0]));
+        assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.color_signal(), Some(sig));
+        assert_eq!(f.layer(), Some(id));
+
+        // Growing the blobs list from the middle of the run leaves the
+        // others in place and keeps one record.
+        f.push_blob(xmp.clone());
+        f.set_color_signal(ColorSignal::srgb());
+        assert_eq!(f.planes.len(), 7);
+        assert_eq!(f.blobs(), vec![icc.clone(), xmp.clone()]);
+        assert_eq!(f.palette_rgba(1), Some([4, 5, 6, 255]));
+        assert_eq!(f.layer(), Some(id));
+        assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
+
+        // Detaching in an arbitrary order.
+        assert_eq!(f.take_palette(), Some(vec![1, 2, 3, 4, 5, 6]));
+        assert_eq!(f.blobs(), vec![icc.clone(), xmp.clone()]);
+        assert_eq!(f.take_blobs(), vec![icc, xmp]);
+        assert_eq!(f.take_layer(), Some(id));
+        assert_eq!(f.take_palette_alpha(), None); // orphaned → None, removed
+        assert_eq!(f.take_color_signal(), Some(ColorSignal::srgb()));
+        assert_eq!(f.take_significant_bits(), Some(vec![8]));
+        assert_eq!(f.planes.len(), 1);
+        assert_eq!(f.image_plane_count(), 1);
+    }
+
+    #[test]
+    fn blobs_survive_clone_and_frame_wrapping() {
+        let exif = MetadataBlob::new(BlobKind::EXIF, b"MM\0*".to_vec());
+        let f = gray_frame().with_blob(exif.clone());
+        let cloned = f.clone();
+        assert_eq!(cloned.blobs(), f.blobs());
+        let wrapped = Frame::Video(cloned);
+        assert_eq!(wrapped.pts(), Some(7));
+        if let Frame::Video(v) = wrapped {
+            assert_eq!(v.blob(&BlobKind::EXIF), Some(exif));
         } else {
             unreachable!("wrapped as Video above");
         }

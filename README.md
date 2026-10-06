@@ -30,9 +30,13 @@ pure-Rust media framework:
   iterates pixel data side-channel-agnostically. See
   [Colour signal](#colour-signal) and
   [Layers and views](#layers-and-views).
+  Per-picture metadata blobs ride the same way (`blobs()` /
+  `set_blobs` / `push_blob` / `take_blobs`, see
+  [Metadata blobs](#metadata-blobs)).
 * **`StreamInfo`** / **`CodecParameters`** — what a demuxer advertises and
   what a decoder / encoder consumes, including the stream's
-  `color_signal` and its `layers` description.
+  `color_signal`, its `layers` description and its metadata `blobs`
+  (ICC / Exif / XMP / IPTC / cover art / custom).
 * **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
   stream; timestamps are integers in that base. Named constants
   (`MILLIS` / `MICROS` / `NANOS` / `MPEG_TS` / `AUDIO_48K` / `AUDIO_44K1`
@@ -230,6 +234,45 @@ Both features are strictly additive: no existing field, signature or
 variant changed, `VideoFrame` remains constructible by struct literal,
 and `CodecParameters` gained its two fields behind its existing
 `#[non_exhaustive]` marker.
+
+## Metadata blobs
+
+Formats embed metadata the framework cannot and should not parse — an
+ICC profile, an Exif block, an XMP packet, IPTC datasets, a track's
+cover art, a format's own attribute table. Module `blob` carries such
+payloads unchanged from the producer that found them to the consumer
+that wants them, on the same path the samples travel:
+
+* **`MetadataBlob { kind: BlobKind, mime: Option<String>, data: Vec<u8> }`**
+  (`#[non_exhaustive]`; `MetadataBlob::new(kind, data)` /
+  `with_mime`). `BlobKind` is a name compared byte-for-byte with
+  well-known constants `ICC`, `EXIF`, `XMP`, `IPTC`, `COVER_ART` and
+  `BlobKind::custom("exr-attributes")` for anything else. The
+  well-known kinds pin a **format-neutral payload** (the carrying
+  format's framing removed: an Exif blob starts at its byte-order mark
+  whether it came from a JPEG `APP1`, a PNG `eXIf` or a HEIF item; an
+  ICC blob is the complete profile file) so a blob lifted from one
+  format drops into another. The module docs hold the table.
+* **Stream** — `CodecParameters::blobs: Vec<MetadataBlob>` (empty by
+  default), with `blobs()` / `blob(&kind)` / `blobs_of(&kind)` /
+  `push_blob` / `with_blob` / `with_blobs` / `take_blobs`. Demuxers
+  fill it from the container, still-image decoders from the
+  codestream, encoders in `output_params()` so muxers know what to
+  embed. Not part of `matches_core`.
+* **Frame** — `VideoFrame::blobs()` / `blob(&kind)` / `set_blobs` /
+  `push_blob` / `with_blob` / `with_blobs` / `take_blobs`, an in-band
+  side-channel record (`stride == usize::MAX - 4`, wire form
+  `blob::encode_blobs` / `decode_blobs`) for pictures whose metadata is
+  genuinely per-picture — a multi-page TIFF's per-page Exif, HEIF burst
+  items with their own profile. A malformed record reads as the empty
+  list, never half a list. A frame blob refines the stream blob of the
+  same kind: `frame.blob(&k).or_else(|| params.blob(&k).cloned())`.
+
+The mechanism is medium- and container-agnostic: the same API carries
+an ICC profile on an image stream and cover art on an audio stream, and
+nothing in core names a container. Container-level file attachments
+with filenames remain `Attachment`; the demuxer-level typed cover-art
+pathway remains `AttachedPicture`.
 
 ## Resolution order
 

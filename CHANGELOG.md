@@ -21,6 +21,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records. A record longer than the palette, or one without a palette,
   reads as `None`; `image_planes()` / `image_plane_count()` exclude it
   like every other record. The existing palette record is unchanged.
+- **Metadata blobs** (`oxideav_core::blob`, re-exported at the root):
+  `MetadataBlob { kind: BlobKind, mime: Option<String>, data: Vec<u8> }`
+  (`#[non_exhaustive]`, `new` / `with_mime` / `is`) and `BlobKind`, a
+  byte-compared name newtype with the well-known constants `ICC`,
+  `EXIF`, `XMP`, `IPTC`, `COVER_ART` (+ `WELL_KNOWN`, `from_static`,
+  `custom`, `as_str`, `is_well_known`, `Display`, `From<&'static str>` /
+  `From<String>`) and a documented format-neutral payload convention per
+  kind. The mechanism is generic — the kinds are examples; nothing in it
+  names a medium or a container.
+- `CodecParameters::blobs: Vec<MetadataBlob>` (new field on the
+  `#[non_exhaustive]` struct, empty by default) with `blobs()` /
+  `blob(&kind)` / `blobs_of(&kind)` / `push_blob` / `with_blob` /
+  `with_blobs` / `take_blobs`. Not part of `matches_core`.
+- `VideoFrame::blobs()` / `blob(&kind)` / `set_blobs` / `push_blob` /
+  `with_blob` / `with_blobs` / `take_blobs` — a sixth in-band
+  side-channel record (`stride == usize::MAX - 4`) holding the whole
+  list in the strict length-prefixed wire form `blob::encode_blobs` /
+  `blob::decode_blobs`, for per-picture metadata (multi-page TIFF Exif
+  per page, HEIF burst items with their own profile). A malformed record
+  reads as the empty list.
+
+### Fixed
+
+- `CodecParameters` docs no longer suggest functional-update
+  `CodecParameters { ..base }` syntax, which `#[non_exhaustive]` forbids
+  outside this crate.
 
 ## [0.1.39](https://github.com/OxideAV/oxideav-core/compare/v0.1.38...v0.1.39) - 2026-10-06
 
