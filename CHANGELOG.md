@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Palette alpha** on `VideoFrame`: a fifth in-band side-channel record
+  (`stride == usize::MAX - 3`, one alpha byte per palette entry, may be
+  shorter than the palette — uncovered entries are opaque) so indexed
+  images with transparent entries (GIF transparent index, PNG `tRNS` on
+  colour type 3, TGA / BMP alpha palettes) no longer render opaque through
+  the registry. `palette_alpha()` / `set_palette_alpha` /
+  `with_palette_alpha` / `take_palette_alpha`, the combined
+  `palette_rgba(index) -> Option<[u8; 4]>` (alpha `255` when absent) and
+  `set_palette_rgba(&[[u8; 4]])` / `with_palette_rgba` writing both
+  records. A record longer than the palette, or one without a palette,
+  reads as `None`; `image_planes()` / `image_plane_count()` exclude it
+  like every other record. The existing palette record is unchanged.
+
 ## [0.1.39](https://github.com/OxideAV/oxideav-core/compare/v0.1.38...v0.1.39) - 2026-10-06
 
 ### Other

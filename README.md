@@ -17,8 +17,10 @@ pure-Rust media framework:
 * **`Frame`** — one uncompressed audio / video / subtitle chunk.
   `VideoFrame` can carry typed in-band side-channels alongside its
   pixel planes: a palette for palette-indexed (`Pal8`) content
-  (`palette()` / `set_palette` / `take_palette`) and a per-plane
-  significant-bits record for mixed depths no single `PixelFormat`
+  (`palette()` / `set_palette` / `take_palette`) with an optional
+  per-entry alpha record (`palette_alpha()` / `set_palette_alpha`,
+  `palette_rgba(i)` / `set_palette_rgba` — see [Palettes](#palettes))
+  and a per-plane significant-bits record for mixed depths no single `PixelFormat`
   names — e.g. 12-bit luma with 10-bit chroma from a custom signal
   range (`significant_bits()` / `set_significant_bits` /
   `take_significant_bits`, LSB-anchored values), a colour-signal
@@ -126,6 +128,33 @@ at the crate root, promoted to deny by CI's clippy gate) and
 `cargo doc` is warning-clean under docs.rs-strict settings.
 
 Zero C dependencies. Zero FFI. Zero `*-sys` crates.
+
+## Palettes
+
+Palette-indexed content (`PixelFormat::Pal8`) carries its colour table
+on the frame as two in-band side-channel records:
+
+* **Palette** (`stride == 0`) — packed RGB triplets, entry `i` at bytes
+  `3*i .. 3*i + 3`; `palette()` / `set_palette` / `with_palette` /
+  `take_palette`, per-entry `palette_rgb(i)`. Up to 256 entries;
+  producers attach exactly as many as the source declares.
+* **Palette alpha** (`stride == usize::MAX - 3`) — one alpha byte per
+  entry in the same order, for a GIF transparent index, a PNG `tRNS`
+  chunk on an indexed image, TGA / BMP alpha palettes;
+  `palette_alpha()` / `set_palette_alpha` / `with_palette_alpha` /
+  `take_palette_alpha`. The record may be **shorter** than the palette
+  (a GIF with transparent index 2 needs three bytes) and every entry it
+  does not cover is opaque. It is only meaningful next to a palette:
+  without one, or when it is **longer** than the palette's entry count,
+  it reads as `None` and consumers fall back to opaque. Validation is
+  at read time, so the two records may be attached in either order.
+
+`palette_rgba(i)` is the one lookup a `Pal8` → RGBA expander needs: the
+RGB triplet plus the alpha (`255` when absent), `None` exactly when
+`palette_rgb(i)` is. `set_palette_rgba(&[[u8; 4]])` /
+`with_palette_rgba` write both records from one RGBA table. Frames
+without a transparent entry attach no alpha record and stay
+byte-for-byte what they were.
 
 ## Colour signal
 

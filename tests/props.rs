@@ -407,12 +407,16 @@ fn bits_msb_reader_never_panics_on_random_ops() {
 // ==================== VideoFrame side-channels ====================
 
 /// Model-based property run for the `VideoFrame` side-channels: random
-/// sequences of palette / significant-bits set/take operations checked
-/// against a trivially-correct model (two `Option<Vec<u8>>`s plus the
-/// frozen image planes). The two records must never interfere with each
-/// other or with the image planes, whatever order operations arrive in.
+/// sequences of palette / palette-alpha / significant-bits set/take
+/// operations checked against a trivially-correct model (three
+/// `Option<Vec<u8>>`s plus the frozen image planes). The records must
+/// never interfere with each other or with the image planes, whatever
+/// order operations arrive in; the palette-alpha record additionally
+/// reads as `None` whenever it is longer than the palette (or there is
+/// no palette), and `palette_rgba` falls back to opaque for every entry
+/// the alpha record does not cover.
 #[test]
-fn video_frame_side_channels_match_two_option_model() {
+fn video_frame_side_channels_match_three_option_model() {
     use oxideav_core::{VideoFrame, VideoPlane};
 
     let mut rng = Lcg::new(0xF3A7);
@@ -435,9 +439,16 @@ fn video_frame_side_channels_match_two_option_model() {
         let mut frame = VideoFrame { pts: None, planes };
         let mut model_palette: Option<Vec<u8>> = None;
         let mut model_bits: Option<Vec<u8>> = None;
+        // The raw alpha record as stored (the model of `planes`), and
+        // what the reader must report given the current palette.
+        let mut model_alpha_raw: Option<Vec<u8>> = None;
+        let model_alpha = |pal: &Option<Vec<u8>>, raw: &Option<Vec<u8>>| -> Option<Vec<u8>> {
+            let entries = pal.as_deref().map_or(0, |p| p.len() / 3);
+            raw.clone().filter(|a| entries > 0 && a.len() <= entries)
+        };
 
-        for _ in 0..40 {
-            match rng.next_u64() % 6 {
+        for _ in 0..60 {
+            match rng.next_u64() % 9 {
                 0 => {
                     // Attach/replace/clear the palette (empty clears).
                     let n = (rng.next_u64() % 4) as usize * 3;
@@ -474,7 +485,7 @@ fn video_frame_side_channels_match_two_option_model() {
                         model_bits.as_deref().and_then(|b| b.get(idx).copied())
                     );
                 }
-                _ => {
+                5 => {
                     let entry = rng.next_u64() as u8;
                     let expect = model_palette.as_deref().and_then(|p| {
                         let at = usize::from(entry) * 3;
@@ -482,11 +493,50 @@ fn video_frame_side_channels_match_two_option_model() {
                     });
                     assert_eq!(frame.palette_rgb(entry), expect);
                 }
+                6 => {
+                    // Attach/replace/clear the alpha record (empty
+                    // clears); lengths straddle the palette's entry
+                    // count so malformed records are exercised.
+                    let n = (rng.next_u64() % 5) as usize;
+                    let alpha: Vec<u8> = (0..n).map(|_| rng.next_u64() as u8).collect();
+                    model_alpha_raw = if alpha.is_empty() {
+                        None
+                    } else {
+                        Some(alpha.clone())
+                    };
+                    frame.set_palette_alpha(alpha);
+                }
+                7 => {
+                    // take reports what the reader would have, but
+                    // removes the record either way.
+                    let expect = model_alpha(&model_palette, &model_alpha_raw);
+                    model_alpha_raw = None;
+                    assert_eq!(frame.take_palette_alpha(), expect);
+                }
+                _ => {
+                    let entry = rng.next_u64() as u8 % 6;
+                    let alpha = model_alpha(&model_palette, &model_alpha_raw);
+                    let expect = model_palette.as_deref().and_then(|p| {
+                        let at = usize::from(entry) * 3;
+                        p.get(at..at + 3).map(|e| {
+                            let a = alpha
+                                .as_deref()
+                                .and_then(|a| a.get(usize::from(entry)).copied())
+                                .unwrap_or(255);
+                            [e[0], e[1], e[2], a]
+                        })
+                    });
+                    assert_eq!(frame.palette_rgba(entry), expect);
+                }
             }
 
             // Invariants after EVERY operation:
             assert_eq!(frame.palette(), model_palette.as_deref());
             assert_eq!(frame.significant_bits(), model_bits.as_deref());
+            assert_eq!(
+                frame.palette_alpha(),
+                model_alpha(&model_palette, &model_alpha_raw).as_deref()
+            );
             // Image planes are never touched by side-channel traffic.
             assert_eq!(frame.image_plane_count(), frozen.len());
             for (plane, (stride, data)) in frame.image_planes().iter().zip(&frozen) {
@@ -494,7 +544,9 @@ fn video_frame_side_channels_match_two_option_model() {
                 assert_eq!(&plane.data, data);
             }
             // Raw plane vector = image planes + one entry per record.
-            let records = usize::from(model_palette.is_some()) + usize::from(model_bits.is_some());
+            let records = usize::from(model_palette.is_some())
+                + usize::from(model_bits.is_some())
+                + usize::from(model_alpha_raw.is_some());
             assert_eq!(frame.planes.len(), frozen.len() + records);
         }
     }

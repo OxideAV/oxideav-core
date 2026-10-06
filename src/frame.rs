@@ -89,13 +89,22 @@ pub struct AudioFrame {
 /// zero stride forces empty data) or a value above `isize::MAX`
 /// (`stride × rows` with any non-zero row count would exceed what a
 /// `Vec` can hold). The whole `stride > isize::MAX` band is reserved
-/// for side-channel tags. Four record kinds exist, distinguished by
+/// for side-channel tags. Five record kinds exist, distinguished by
 /// their `stride` tag:
 ///
 /// - **Palette** — `stride == 0`. Carries the color table for
 ///   palette-indexed content
 ///   ([`PixelFormat::Pal8`](crate::PixelFormat::Pal8)); see
 ///   [`palette`](Self::palette) / [`set_palette`](Self::set_palette).
+/// - **Palette alpha** — `stride == usize::MAX - 3`. Carries one
+///   alpha byte per palette entry for tables with transparent or
+///   translucent entries (a GIF transparent index, a PNG `tRNS` chunk
+///   on a colour-type-3 image, TGA / BMP alpha palettes); entries the
+///   record does not cover are opaque. Only meaningful next to a
+///   palette record; see [`palette_alpha`](Self::palette_alpha) /
+///   [`set_palette_alpha`](Self::set_palette_alpha) and the combined
+///   [`palette_rgba`](Self::palette_rgba) /
+///   [`set_palette_rgba`](Self::set_palette_rgba).
 /// - **Per-plane significant bits** — `stride == usize::MAX`. Carries
 ///   mixed per-plane bit depths (e.g. 12-bit luma with 10-bit chroma
 ///   from a wavelet codec's custom signal range); see
@@ -133,9 +142,9 @@ pub struct VideoFrame {
     pub pts: Option<i64>,
     /// One entry per plane (e.g., 3 for Yuv420P). Each entry is `(stride, bytes)`.
     ///
-    /// May additionally end with side-channel entries (palette,
-    /// per-plane significant bits, colour signal, layer identity — see
-    /// the type-level docs). Code that
+    /// May additionally end with side-channel entries (palette, palette
+    /// alpha, per-plane significant bits, colour signal, layer identity
+    /// — see the type-level docs). Code that
     /// wants only pixel planes should iterate
     /// [`image_planes`](Self::image_planes) instead of this field.
     pub planes: Vec<VideoPlane>,
@@ -150,6 +159,9 @@ const COLOR_SIGNAL_STRIDE: usize = usize::MAX - 1;
 
 /// `stride` tag of the layer-identity side-channel record.
 const LAYER_IDENTITY_STRIDE: usize = usize::MAX - 2;
+
+/// `stride` tag of the palette-alpha side-channel record.
+const PALETTE_ALPHA_STRIDE: usize = usize::MAX - 3;
 
 /// Smallest `stride` value that is impossible for an image plane with
 /// at least one row: `stride × rows` would exceed `isize::MAX`, the
@@ -256,9 +268,124 @@ impl VideoFrame {
 
     /// Detach and return the frame's palette side-channel, if any.
     /// Afterwards the frame carries no palette (any other side-channel
-    /// record is left in place).
+    /// record is left in place — including a palette-alpha record,
+    /// which then reads as `None` until a palette is attached again).
     pub fn take_palette(&mut self) -> Option<Vec<u8>> {
         self.remove_side_channel(0)
+    }
+
+    /// Number of entries the attached palette covers (`len / 3`), or
+    /// `0` without a palette.
+    fn palette_entry_count(&self) -> usize {
+        self.palette().map_or(0, |p| p.len() / 3)
+    }
+
+    /// The frame's attached palette-alpha record, if any.
+    ///
+    /// Returns the raw bytes of the palette-alpha side-channel (see the
+    /// type-level docs): byte `i` is the alpha of palette entry `i`
+    /// (`0` transparent, `255` opaque), in the same entry order as
+    /// [`palette`](Self::palette). The record may be shorter than the
+    /// palette — a GIF with one transparent index needs only
+    /// `index + 1` bytes — and every entry it does not cover is opaque.
+    ///
+    /// The record is only meaningful next to a palette: it reads as
+    /// `None` when no palette is attached, and a malformed record
+    /// **longer** than the palette's entry count also reads as `None`
+    /// (consumers fall back to opaque). Validation happens at read
+    /// time, so palette and alpha may be attached in either order.
+    pub fn palette_alpha(&self) -> Option<&[u8]> {
+        let i = self.side_channel_index(PALETTE_ALPHA_STRIDE)?;
+        let alpha = self.planes[i].data.as_slice();
+        let entries = self.palette_entry_count();
+        (entries > 0 && alpha.len() <= entries).then_some(alpha)
+    }
+
+    /// The RGBA quadruplet for palette entry `index`: the RGB triplet
+    /// from the palette record and the alpha from the palette-alpha
+    /// record, or `255` (opaque) when no alpha record is attached, it
+    /// does not cover `index`, or it is malformed. `None` when no
+    /// palette is attached or the palette is too short to cover
+    /// `index` — exactly when [`palette_rgb`](Self::palette_rgb) is
+    /// `None`. The one lookup a `Pal8` → RGBA expander needs.
+    pub fn palette_rgba(&self, index: u8) -> Option<[u8; 4]> {
+        let [r, g, b] = self.palette_rgb(index)?;
+        let a = self
+            .palette_alpha()
+            .and_then(|a| a.get(usize::from(index)).copied())
+            .unwrap_or(u8::MAX);
+        Some([r, g, b, a])
+    }
+
+    /// Attach (or replace) the frame's palette-alpha side-channel.
+    ///
+    /// `alpha` holds one byte per palette entry, in entry order — see
+    /// [`palette_alpha`](Self::palette_alpha) for the semantics (may be
+    /// shorter than the palette; uncovered entries are opaque). The
+    /// bytes are stored verbatim; the length is checked against the
+    /// palette when read, not here, so the two records may be attached
+    /// in either order. An empty `alpha` removes any attached record
+    /// instead (the sentinel requires non-empty data). Other
+    /// side-channel records — the palette included — are unaffected.
+    pub fn set_palette_alpha(&mut self, alpha: Vec<u8>) {
+        self.remove_side_channel(PALETTE_ALPHA_STRIDE);
+        if !alpha.is_empty() {
+            self.planes.push(VideoPlane {
+                stride: PALETTE_ALPHA_STRIDE,
+                data: alpha,
+            });
+        }
+    }
+
+    /// Builder-style counterpart to
+    /// [`set_palette_alpha`](Self::set_palette_alpha) for construction
+    /// chains:
+    /// `VideoFrame { pts, planes }.with_palette(rgb).with_palette_alpha(alpha)`.
+    pub fn with_palette_alpha(mut self, alpha: Vec<u8>) -> Self {
+        self.set_palette_alpha(alpha);
+        self
+    }
+
+    /// Detach and return the frame's palette-alpha side-channel, if
+    /// any — the bytes [`palette_alpha`](Self::palette_alpha) would
+    /// have reported, so a record that read as `None` (no palette, or
+    /// longer than the palette) is removed but returns `None`.
+    /// Afterwards the frame carries no palette alpha (the palette and
+    /// every other record are left in place).
+    pub fn take_palette_alpha(&mut self) -> Option<Vec<u8>> {
+        let valid = self.palette_alpha().is_some();
+        self.remove_side_channel(PALETTE_ALPHA_STRIDE)
+            .filter(|_| valid)
+    }
+
+    /// Attach (or replace) both palette records at once from RGBA
+    /// entries: entry `i` of `rgba` becomes bytes `3*i .. 3*i + 3` of
+    /// the palette record and byte `i` of the palette-alpha record.
+    /// The alpha record is written even when every entry is opaque
+    /// (stored verbatim, no trimming). An empty `rgba` removes both
+    /// records.
+    ///
+    /// ```
+    /// # use oxideav_core::{VideoFrame, VideoPlane};
+    /// let mut f = VideoFrame { pts: None, planes: vec![VideoPlane { stride: 1, data: vec![1] }] };
+    /// f.set_palette_rgba(&[[0, 0, 0, 0], [255, 255, 255, 255]]);
+    /// assert_eq!(f.palette_rgba(0), Some([0, 0, 0, 0]));
+    /// assert_eq!(f.palette_rgba(1), Some([255, 255, 255, 255]));
+    /// assert_eq!(f.palette_rgba(2), None);
+    /// assert_eq!(f.image_plane_count(), 1);
+    /// ```
+    pub fn set_palette_rgba(&mut self, rgba: &[[u8; 4]]) {
+        let rgb = rgba.iter().flat_map(|e| [e[0], e[1], e[2]]).collect();
+        let alpha = rgba.iter().map(|e| e[3]).collect();
+        self.set_palette(rgb);
+        self.set_palette_alpha(alpha);
+    }
+
+    /// Builder-style counterpart to
+    /// [`set_palette_rgba`](Self::set_palette_rgba).
+    pub fn with_palette_rgba(mut self, rgba: &[[u8; 4]]) -> Self {
+        self.set_palette_rgba(rgba);
+        self
     }
 
     /// The frame's attached per-plane significant-bits record, if any.
@@ -428,8 +555,8 @@ impl VideoFrame {
     }
 
     /// The frame's image planes — `planes` with the trailing
-    /// side-channel entries (palette, significant bits, colour signal,
-    /// layer identity) excluded.
+    /// side-channel entries (palette, palette alpha, significant bits,
+    /// colour signal, layer identity) excluded.
     /// Prefer this over indexing `planes` directly in code that
     /// handles side-channel-capable frames.
     pub fn image_planes(&self) -> &[VideoPlane] {
@@ -450,8 +577,8 @@ impl VideoFrame {
 ///
 /// An entry with non-empty `data` and a `stride` of `0` or above
 /// `isize::MAX` is not an image plane: it is a side-channel record
-/// (palette, per-plane significant bits, colour signal, layer identity)
-/// described on [`VideoFrame`] — only meaningful within the trailing
+/// (palette, palette alpha, per-plane significant bits, colour signal,
+/// layer identity) described on [`VideoFrame`] — only meaningful within the trailing
 /// run of `VideoFrame::planes`.
 #[derive(Clone, Debug)]
 pub struct VideoPlane {
@@ -926,6 +1053,239 @@ mod tests {
         if let Frame::Video(v) = wrapped {
             assert_eq!(v.color_signal(), Some(sig));
             assert_eq!(v.layer(), Some(id));
+        } else {
+            unreachable!("wrapped as Video above");
+        }
+    }
+
+    #[test]
+    fn frame_without_palette_alpha_reads_opaque() {
+        // No alpha record: palette_alpha is None and every covered
+        // entry is opaque through palette_rgba.
+        let f = gray_frame().with_palette(vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.palette_rgba(0), Some([1, 2, 3, 255]));
+        assert_eq!(f.palette_rgba(1), Some([4, 5, 6, 255]));
+        // Beyond the palette: None, exactly like palette_rgb.
+        assert_eq!(f.palette_rgba(2), None);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 2);
+
+        // No palette at all: no RGBA either.
+        let g = gray_frame();
+        assert_eq!(g.palette_alpha(), None);
+        assert_eq!(g.palette_rgba(0), None);
+    }
+
+    #[test]
+    fn set_palette_alpha_round_trips_and_keeps_image_planes_intact() {
+        // A GIF-style table: entry 2 is the transparent index, the
+        // record covers only entries 0..=2 and the rest stay opaque.
+        let mut f = gray_frame().with_palette(full_palette());
+        f.set_palette_alpha(vec![255, 255, 0]);
+
+        assert_eq!(f.palette_alpha(), Some(&[255, 255, 0][..]));
+        assert_eq!(f.palette_rgba(0), Some([0x00, 0xFF, 0x55, 255]));
+        assert_eq!(f.palette_rgba(2), Some([0x02, 0xFD, 0x57, 0]));
+        // Uncovered entries are opaque.
+        assert_eq!(f.palette_rgba(3), Some([0x03, 0xFC, 0x56, 255]));
+        assert_eq!(f.palette_rgba(255), Some([0xFF, 0x00, 0xAA, 255]));
+        // Image-plane view is unchanged; the raw field sees two records.
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.image_planes()[0].data.len(), 8);
+        assert_eq!(f.planes.len(), 3);
+        assert_eq!(f.planes[2].stride, usize::MAX - 3);
+        // The RGB record is untouched by the alpha record.
+        assert_eq!(f.palette().map(<[u8]>::len), Some(768));
+
+        // Replacement, not stacking.
+        f.set_palette_alpha(vec![128]);
+        assert_eq!(f.planes.len(), 3);
+        assert_eq!(f.palette_alpha(), Some(&[128][..]));
+        assert_eq!(f.palette_rgba(0), Some([0x00, 0xFF, 0x55, 128]));
+
+        // Empty input removes the record; the palette stays.
+        f.set_palette_alpha(Vec::new());
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.palette().map(<[u8]>::len), Some(768));
+
+        // take_palette_alpha detaches and returns the bytes.
+        f.set_palette_alpha(vec![0, 255]);
+        assert_eq!(f.take_palette_alpha(), Some(vec![0, 255]));
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.take_palette_alpha(), None);
+        assert_eq!(f.planes.len(), 2);
+    }
+
+    #[test]
+    fn palette_alpha_longer_than_palette_is_malformed_and_reads_none() {
+        // Two-entry palette, three alpha bytes: malformed → None, and
+        // palette_rgba falls back to opaque.
+        let mut f = gray_frame()
+            .with_palette(vec![1, 2, 3, 4, 5, 6])
+            .with_palette_alpha(vec![0, 0, 0]);
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.palette_rgba(0), Some([1, 2, 3, 255]));
+        assert_eq!(f.palette_rgba(1), Some([4, 5, 6, 255]));
+        // The entry is still side-channel-shaped: excluded from the
+        // image planes, present in the raw field.
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 3);
+        // Exactly as long as the palette is fine.
+        f.set_palette_alpha(vec![0, 7]);
+        assert_eq!(f.palette_alpha(), Some(&[0, 7][..]));
+        assert_eq!(f.palette_rgba(1), Some([4, 5, 6, 7]));
+        // Growing the palette afterwards makes a previously malformed
+        // record valid: validation is at read time.
+        f.set_palette_alpha(vec![0, 0, 0]);
+        assert_eq!(f.palette_alpha(), None);
+        f.set_palette(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(f.palette_alpha(), Some(&[0, 0, 0][..]));
+        // Taking a malformed record removes it but reports None.
+        f.set_palette(vec![1, 2, 3]);
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.take_palette_alpha(), None);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.palette(), Some(&[1, 2, 3][..]));
+    }
+
+    #[test]
+    fn palette_alpha_without_palette_reads_none_in_either_order() {
+        // Alpha attached first (encoder scaffolding): meaningless until
+        // the palette arrives, then readable.
+        let mut f = gray_frame().with_palette_alpha(vec![0]);
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.palette_rgba(0), None);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 2);
+        f.set_palette(vec![9, 9, 9]);
+        assert_eq!(f.palette_alpha(), Some(&[0][..]));
+        assert_eq!(f.palette_rgba(0), Some([9, 9, 9, 0]));
+
+        // Detaching the palette orphans the alpha record: None again,
+        // still side-channel-shaped, and set_palette brings it back.
+        assert_eq!(f.take_palette(), Some(vec![9, 9, 9]));
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.planes.len(), 2);
+        assert_eq!(f.image_plane_count(), 1);
+        f.set_palette(vec![1, 1, 1]);
+        assert_eq!(f.palette_alpha(), Some(&[0][..]));
+    }
+
+    #[test]
+    fn set_palette_rgba_writes_both_records() {
+        let table = [[10, 20, 30, 0], [40, 50, 60, 255], [70, 80, 90, 128]];
+        let mut f = gray_frame().with_palette_rgba(&table);
+        assert_eq!(f.palette(), Some(&[10, 20, 30, 40, 50, 60, 70, 80, 90][..]));
+        assert_eq!(f.palette_alpha(), Some(&[0, 255, 128][..]));
+        for (i, e) in table.iter().enumerate() {
+            assert_eq!(f.palette_rgba(i as u8), Some(*e));
+        }
+        assert_eq!(f.palette_rgba(3), None);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.planes.len(), 3);
+
+        // Replaces an existing pair.
+        f.set_palette_rgba(&[[1, 2, 3, 4]]);
+        assert_eq!(f.planes.len(), 3);
+        assert_eq!(f.palette_rgba(0), Some([1, 2, 3, 4]));
+        assert_eq!(f.palette_rgba(1), None);
+
+        // Empty clears both.
+        f.set_palette_rgba(&[]);
+        assert_eq!(f.palette(), None);
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.planes.len(), 1);
+    }
+
+    #[test]
+    fn all_five_side_channels_compose_in_any_order() {
+        let sig = ColorSignal::bt709_limited();
+        let id = LayerIdentity::new(1).with_view_id(1);
+        // Alpha before palette, palette in the middle, every other
+        // record around them.
+        let mut f = gray_frame()
+            .with_palette_alpha(vec![0])
+            .with_layer(id)
+            .with_palette(vec![1, 2, 3, 4, 5, 6])
+            .with_color_signal(sig)
+            .with_significant_bits(vec![8]);
+        assert_eq!(f.planes.len(), 6);
+        assert_eq!(f.image_plane_count(), 1);
+        assert_eq!(f.palette(), Some(&[1, 2, 3, 4, 5, 6][..]));
+        assert_eq!(f.palette_alpha(), Some(&[0][..]));
+        assert_eq!(f.palette_rgba(0), Some([1, 2, 3, 0]));
+        assert_eq!(f.palette_rgba(1), Some([4, 5, 6, 255]));
+        assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.color_signal(), Some(sig));
+        assert_eq!(f.layer(), Some(id));
+
+        // Replacing records from the middle of the run leaves the
+        // others in place.
+        f.set_palette_alpha(vec![255, 0]);
+        f.set_color_signal(ColorSignal::srgb());
+        f.set_palette(vec![7, 8, 9, 10, 11, 12]);
+        assert_eq!(f.planes.len(), 6);
+        assert_eq!(f.palette_rgba(1), Some([10, 11, 12, 0]));
+        assert_eq!(f.significant_bits(), Some(&[8][..]));
+        assert_eq!(f.layer(), Some(id));
+        assert_eq!(f.color_signal(), Some(ColorSignal::srgb()));
+
+        // Detaching in an arbitrary order.
+        assert_eq!(f.take_layer(), Some(id));
+        assert_eq!(f.take_palette_alpha(), Some(vec![255, 0]));
+        assert_eq!(f.palette_rgba(1), Some([10, 11, 12, 255]));
+        assert_eq!(f.take_palette(), Some(vec![7, 8, 9, 10, 11, 12]));
+        assert_eq!(f.take_color_signal(), Some(ColorSignal::srgb()));
+        assert_eq!(f.take_significant_bits(), Some(vec![8]));
+        assert_eq!(f.planes.len(), 1);
+        assert_eq!(f.image_plane_count(), 1);
+
+        // Reverse construction order lands on the same answers.
+        let g = gray_frame()
+            .with_significant_bits(vec![8])
+            .with_color_signal(sig)
+            .with_palette(vec![1, 2, 3])
+            .with_layer(id)
+            .with_palette_alpha(vec![9]);
+        assert_eq!(g.planes.len(), 6);
+        assert_eq!(g.image_plane_count(), 1);
+        assert_eq!(g.palette_rgba(0), Some([1, 2, 3, 9]));
+        assert_eq!(g.significant_bits(), Some(&[8][..]));
+        assert_eq!(g.color_signal(), Some(sig));
+        assert_eq!(g.layer(), Some(id));
+    }
+
+    #[test]
+    fn palette_alpha_tag_with_empty_data_is_not_a_record() {
+        let f = VideoFrame {
+            pts: None,
+            planes: vec![
+                VideoPlane {
+                    stride: 4,
+                    data: vec![0u8; 8],
+                },
+                VideoPlane {
+                    stride: usize::MAX - 3,
+                    data: Vec::new(),
+                },
+            ],
+        };
+        assert_eq!(f.palette_alpha(), None);
+        assert_eq!(f.image_plane_count(), 2);
+    }
+
+    #[test]
+    fn palette_alpha_survives_clone_and_frame_wrapping() {
+        let f = gray_frame().with_palette_rgba(&[[1, 2, 3, 0], [4, 5, 6, 255]]);
+        let cloned = f.clone();
+        assert_eq!(cloned.palette_alpha(), f.palette_alpha());
+        let wrapped = Frame::Video(cloned);
+        assert_eq!(wrapped.pts(), Some(7));
+        if let Frame::Video(v) = wrapped {
+            assert_eq!(v.palette_rgba(0), Some([1, 2, 3, 0]));
+            assert_eq!(v.palette_rgba(1), Some([4, 5, 6, 255]));
         } else {
             unreachable!("wrapped as Video above");
         }
