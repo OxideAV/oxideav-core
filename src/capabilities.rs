@@ -33,7 +33,14 @@ use crate::format::{MediaType, PixelFormat, SampleFormat};
 pub const DEFAULT_PRIORITY: i32 = 100;
 
 /// What an implementation can do plus how it ranks vs alternatives.
+///
+/// `#[non_exhaustive]`: build it with [`audio`](Self::audio),
+/// [`video`](Self::video) or [`subtitle`](Self::subtitle) and the
+/// `with_*` builders, then read the public fields. Fields are added
+/// over time (0.1.38 added the accepted sample rates / formats) and a
+/// struct literal in a downstream crate would stop compiling each time.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CodecCapabilities {
     /// Decoding supported by this implementation.
     pub decode: bool,
@@ -132,6 +139,24 @@ impl CodecCapabilities {
             accepted_sample_rates: Vec::new(),
             accepted_sample_formats: Vec::new(),
         }
+    }
+
+    /// Construct a software subtitle decoder/encoder capability set with
+    /// sensible defaults (intra-only, lossless) — adjust with the
+    /// `with_*` builders.
+    pub fn subtitle(implementation: impl Into<String>) -> Self {
+        let mut caps = Self::audio(implementation);
+        caps.media_type = MediaType::Subtitle;
+        caps.intra_only = true;
+        caps.lossless = true;
+        caps
+    }
+
+    /// Override the media type (for capability sets built from the
+    /// closest constructor, e.g. data or attachment streams).
+    pub fn with_media_type(mut self, media_type: MediaType) -> Self {
+        self.media_type = media_type;
+        self
     }
 
     /// 6-character capability flag string (see the module docs for the

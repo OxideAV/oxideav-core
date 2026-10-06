@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `CodecCapabilities` is `#[non_exhaustive]`: construct it with `audio` / `video` / the new `subtitle` constructor and the `with_*` builders (new: `with_media_type`). Adding a field (as 0.1.38 did) no longer breaks downstream struct literals — it already broke the published ass / sub-image crates once.
+
 ## [0.1.38](https://github.com/OxideAV/oxideav-core/compare/v0.1.37...v0.1.38) - 2026-10-04
 
 ### Other
