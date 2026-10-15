@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
+
+### Other
+
+- disable its semver check (baseline was the yanked 0.2.0); CI gains a cargo-semver-checks job
+- Metadata blobs: named opaque payloads on CodecParameters and VideoFrame
+- VideoFrame palette alpha: per-entry alpha side-channel next to the palette
+
 ### Added
 
 - **Palette alpha** on `VideoFrame`: a fifth in-band side-channel record
