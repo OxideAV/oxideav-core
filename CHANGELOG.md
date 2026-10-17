@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-core/compare/v0.1.40...v0.2.0) - 2026-10-17
+
+### Other
+
+- the semver job's comment no longer refers to a release-plz override (removed in 0bdaad9)
+- re-enable its semver check (user call); the CI cargo-semver-checks job stays
+
 ## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
 
 ### Other
