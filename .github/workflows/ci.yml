@@ -18,12 +18,10 @@ jobs:
     uses: OxideAV/.github/.github/workflows/crate-ci.yml@master
     secrets: inherit
 
-  # API-compatibility gate. release-plz's own semver check is disabled for
-  # this crate (see release-plz.toml): it compares against the highest
-  # crates.io version including the yanked 0.2.0. cargo-semver-checks run
-  # directly resolves the baseline to the latest NON-yanked release, so a
-  # breaking change on the 0.1.x line fails here instead of surfacing as a
-  # phantom 0.2.0 release proposal.
+  # API-compatibility gate, independent of release-plz's own check.
+  # cargo-semver-checks run directly resolves the baseline to the latest
+  # NON-yanked crates.io release, so a breaking change on the 0.1.x line
+  # fails here regardless of what the release PR proposes.
   semver:
     name: cargo-semver-checks
     runs-on: ubuntu-latest
