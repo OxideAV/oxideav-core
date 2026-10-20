@@ -97,6 +97,56 @@ pub trait Muxer: Send {
 
     /// Finalize the file (write index, patch in total sizes, etc.).
     fn write_trailer(&mut self) -> Result<()>;
+
+    /// Hand the muxer container-level string metadata: ordered
+    /// `(key, value)` pairs in the vocabulary
+    /// [`Demuxer::metadata`] reports (`title`, `artist`, `album`,
+    /// `comment`, `date`, …), so a remux is
+    /// `mux.set_metadata(demux.metadata())`. Call it after
+    /// construction and **before** [`write_header`](Self::write_header):
+    /// most formats write their text block in the header or need to
+    /// reserve room for it there.
+    ///
+    /// Formats differ in what they can hold — a free-form tag block
+    /// stores every pair, a fixed header with a title field stores one
+    /// key and has nowhere for the rest, a format with no text at all
+    /// stores nothing — so the contract is best-effort and explicit
+    /// about the "nothing" case:
+    ///
+    /// - The default returns [`Error::Unsupported`]: the format carries
+    ///   no text metadata and nothing was stored. Callers treat that as
+    ///   "not carried", never as a failure of the write.
+    /// - A muxer that carries text overrides this, keeps the pairs it
+    ///   has a field for and returns `Ok(())`. Keys it has no field for
+    ///   are dropped without an error; its docs say which keys it
+    ///   writes, and [`carries_metadata_key`](Self::carries_metadata_key)
+    ///   answers the same question programmatically. The two overrides
+    ///   go together.
+    /// - Opaque payloads (an ICC profile, an Exif block, a format's own
+    ///   binary table) are not text: they travel as
+    ///   [`MetadataBlob`](crate::MetadataBlob)s on the stream's
+    ///   [`CodecParameters::blobs`](crate::CodecParameters::blobs) and on
+    ///   frames, not through this hook — and a format's native *text*
+    ///   fields (a comment extension, an annotation chunk, an author
+    ///   field in a trailer) belong here, not in a blob.
+    /// - A later call replaces the earlier set; `&[]` clears it.
+    ///   Implementations are free to refuse a call after `write_header`
+    ///   with [`Error::InvalidData`]; the default never checks.
+    fn set_metadata(&mut self, _metadata: &[(String, String)]) -> Result<()> {
+        Err(Error::unsupported(
+            "this muxer does not carry container metadata",
+        ))
+    }
+
+    /// `true` when [`set_metadata`](Self::set_metadata) stores a pair
+    /// under `key` — the "will the title survive this save?" question,
+    /// answerable before anything is written. The default is `false`
+    /// for every key, matching the default `set_metadata`. A free-form
+    /// tag block answers `true` for every key; a fixed-field format
+    /// lists its keys (`matches!(key, "title" | "comment")`).
+    fn carries_metadata_key(&self, _key: &str) -> bool {
+        false
+    }
 }
 
 /// Factory that tries to open a stream as a particular container format.
@@ -581,6 +631,101 @@ mod tests {
         fn next_packet(&mut self) -> Result<Packet> {
             Err(Error::Eof)
         }
+    }
+
+    struct DummyMuxer;
+
+    impl Muxer for DummyMuxer {
+        fn format_name(&self) -> &str {
+            "dummy"
+        }
+        fn write_header(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn write_packet(&mut self, _packet: &Packet) -> Result<()> {
+            Ok(())
+        }
+        fn write_trailer(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A muxer with one text field: it keeps `title` and drops the
+    /// rest, the fixed-header shape the contract describes.
+    struct TitleOnlyMuxer {
+        title: Option<String>,
+        header_written: bool,
+    }
+
+    impl Muxer for TitleOnlyMuxer {
+        fn format_name(&self) -> &str {
+            "title-only"
+        }
+        fn write_header(&mut self) -> Result<()> {
+            self.header_written = true;
+            Ok(())
+        }
+        fn write_packet(&mut self, _packet: &Packet) -> Result<()> {
+            Ok(())
+        }
+        fn write_trailer(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn set_metadata(&mut self, metadata: &[(String, String)]) -> Result<()> {
+            if self.header_written {
+                return Err(Error::invalid("metadata must precede the header"));
+            }
+            self.title = metadata
+                .iter()
+                .find(|(k, _)| k == "title")
+                .map(|(_, v)| v.clone());
+            Ok(())
+        }
+        fn carries_metadata_key(&self, key: &str) -> bool {
+            key == "title"
+        }
+    }
+
+    #[test]
+    fn default_muxer_metadata_hook_is_unsupported_and_carries_nothing() {
+        let mut m = DummyMuxer;
+        assert!(!m.carries_metadata_key("title"));
+        assert!(!m.carries_metadata_key("comment"));
+        let pairs = vec![("title".to_string(), "x".to_string())];
+        match m.set_metadata(&pairs) {
+            Err(Error::Unsupported(_)) => {}
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        // The hook takes exactly what `Demuxer::metadata` returns, so a
+        // remux hands the slice straight across.
+        let d = DummyDemuxer;
+        match m.set_metadata(d.metadata()) {
+            Err(Error::Unsupported(_)) => {}
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn overriding_muxer_keeps_its_keys_and_drops_the_rest() {
+        let mut m = TitleOnlyMuxer {
+            title: None,
+            header_written: false,
+        };
+        assert!(m.carries_metadata_key("title"));
+        assert!(!m.carries_metadata_key("artist"));
+        let pairs = vec![
+            ("artist".to_string(), "someone".to_string()),
+            ("title".to_string(), "a picture".to_string()),
+            ("comment".to_string(), "dropped".to_string()),
+        ];
+        m.set_metadata(&pairs).unwrap();
+        assert_eq!(m.title.as_deref(), Some("a picture"));
+        // A later call replaces; an empty set clears.
+        m.set_metadata(&[]).unwrap();
+        assert_eq!(m.title, None);
+        // This implementation refuses late calls, as the docs allow.
+        m.write_header().unwrap();
+        assert!(matches!(m.set_metadata(&pairs), Err(Error::InvalidData(_))));
     }
 
     #[test]

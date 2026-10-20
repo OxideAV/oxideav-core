@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   padding included) and `is_rgb()` (packed RGB or the planar GBR(A)
   family), completing the family predicates next to `is_planar` /
   `has_alpha` / `is_float` / `is_palette`.
+- **Muxer metadata hook**: `Muxer::set_metadata(&[(String, String)])`
+  (default-implemented, returns `Error::Unsupported` = the format carries
+  no text metadata, nothing stored) takes the ordered pairs
+  `Demuxer::metadata()` reports — same vocabulary, same slice type, so
+  `mux.set_metadata(demux.metadata())` is a remux — before `write_header`;
+  an overriding muxer keeps the pairs it has a field for and drops the rest
+  without error. `Muxer::carries_metadata_key(&str) -> bool` (default
+  `false`) answers "will this key survive the save?" before anything is
+  written. Format-native text (a comment extension, an annotation chunk, an
+  author field) now has a home other than a custom blob.
 
 ## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
 

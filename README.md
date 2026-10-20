@@ -241,6 +241,24 @@ variant changed, `VideoFrame` remains constructible by struct literal,
 and `CodecParameters` gained its two fields behind its existing
 `#[non_exhaustive]` marker.
 
+## Container metadata
+
+Text metadata — the ordered `(key, value)` pairs a demuxer reports from
+`Demuxer::metadata()` (`title`, `artist`, `album`, `comment`, `date`,
+…) — now has a write side: `Muxer::set_metadata(&[(String, String)])`,
+called after construction and before `write_header`, so a remux is
+`mux.set_metadata(demux.metadata())`. The contract is best-effort and
+explicit about "nothing": the default returns `Error::Unsupported`
+(the format carries no text, nothing was stored — "not carried", not
+a failed write); a muxer with text fields keeps the pairs it has a
+field for, drops the rest without error and says which keys it writes;
+`Muxer::carries_metadata_key(key)` answers "will the title survive
+this save?" before anything is written (default `false`; override
+both together). A format's native text fields — a comment extension,
+an annotation chunk, an author field in a trailer — go through this
+hook; opaque payloads go through the blobs below, never the other way
+round.
+
 ## Metadata blobs
 
 Formats embed metadata the framework cannot and should not parse — an
