@@ -645,7 +645,7 @@ fn metadata_blob_wire_form_round_trips_and_rejects_every_prefix() {
 
 /// Every `PixelFormat` variant, in discriminant order (mirrors the
 /// in-crate unit-test list; extend on every appended variant).
-const ALL_PIXEL_FORMATS: [PixelFormat; 70] = [
+const ALL_PIXEL_FORMATS: [PixelFormat; 82] = [
     PixelFormat::Yuv420P,
     PixelFormat::Yuv422P,
     PixelFormat::Yuv444P,
@@ -716,6 +716,18 @@ const ALL_PIXEL_FORMATS: [PixelFormat; 70] = [
     PixelFormat::RgbaF32Le,
     PixelFormat::GbrpF32Le,
     PixelFormat::GbrapF32Le,
+    PixelFormat::Rgb555Le,
+    PixelFormat::Rgb555Be,
+    PixelFormat::Bgr555Le,
+    PixelFormat::Bgr555Be,
+    PixelFormat::Rgb565Le,
+    PixelFormat::Rgb565Be,
+    PixelFormat::Bgr565Le,
+    PixelFormat::Bgr565Be,
+    PixelFormat::Rgbx,
+    PixelFormat::Bgrx,
+    PixelFormat::Xrgb,
+    PixelFormat::Xbgr,
 ];
 
 /// An edge-biased picture dimension: 0, 1, tiny odds, and sizes around

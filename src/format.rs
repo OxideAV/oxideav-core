@@ -815,6 +815,80 @@ pub enum PixelFormat {
     /// plane is at full resolution as plane index 3, straight
     /// (non-premultiplied), nominal range [0, 1].
     GbrapF32Le = 69,
+
+    // --- Packed 16-bit RGB: three sub-byte components in one word ---
+    //
+    // One 16-bit word per pixel. The name lists the components from
+    // the word's most significant bits downward and the suffix is the
+    // byte order of the word in memory (`Le`: least significant byte
+    // first, `Be`: most significant byte first):
+    //
+    // | layout   | bit 15 | 14..10 | 15..11 | 10..5 | 9..5 | 4..0 |
+    // |----------|--------|--------|--------|-------|------|------|
+    // | `Rgb555` | unused | R      |        |       | G    | B    |
+    // | `Bgr555` | unused | B      |        |       | G    | R    |
+    // | `Rgb565` |        |        | R      | G     |      | B    |
+    // | `Bgr565` |        |        | B      | G     |      | R    |
+    //
+    // Component values are 5-bit (full-scale 31) or, for the middle
+    // component of 5-6-5, 6-bit (full-scale 63) integers; widening to
+    // 8 bits is the consumer's conversion (bit replication or
+    // scaling), not a property of the layout. The unused top bit of a
+    // 5-5-5 word is **not** an alpha channel: writers emit 0 and
+    // readers ignore it. A file format that uses that bit as a one-bit
+    // attribute carries the fact on its own side (its header), and a
+    // decoder that honours it emits an alpha-bearing layout instead.
+    // These are the native pixels of 16-bit bitmap files, 15/16-bit
+    // TGA files and many embedded framebuffers; `plane_row_bytes` is
+    // `2 × width`, `bits_per_pixel_approx` the 16-bit storage cost.
+    /// Packed 5-5-5 RGB in one little-endian 16-bit word: R in bits
+    /// 14..10, G in 9..5, B in 4..0; bit 15 unused (written as 0).
+    Rgb555Le = 70,
+    /// Packed 5-5-5 RGB in one big-endian 16-bit word: R in bits
+    /// 14..10, G in 9..5, B in 4..0; bit 15 unused (written as 0).
+    Rgb555Be = 71,
+    /// Packed 5-5-5 BGR in one little-endian 16-bit word: B in bits
+    /// 14..10, G in 9..5, R in 4..0; bit 15 unused (written as 0).
+    Bgr555Le = 72,
+    /// Packed 5-5-5 BGR in one big-endian 16-bit word: B in bits
+    /// 14..10, G in 9..5, R in 4..0; bit 15 unused (written as 0).
+    Bgr555Be = 73,
+    /// Packed 5-6-5 RGB in one little-endian 16-bit word: R in bits
+    /// 15..11, G in 10..5, B in 4..0.
+    Rgb565Le = 74,
+    /// Packed 5-6-5 RGB in one big-endian 16-bit word: R in bits
+    /// 15..11, G in 10..5, B in 4..0.
+    Rgb565Be = 75,
+    /// Packed 5-6-5 BGR in one little-endian 16-bit word: B in bits
+    /// 15..11, G in 10..5, R in 4..0.
+    Bgr565Le = 76,
+    /// Packed 5-6-5 BGR in one big-endian 16-bit word: B in bits
+    /// 15..11, G in 10..5, R in 4..0.
+    Bgr565Be = 77,
+
+    // --- Padded 32-bit RGB: three 8-bit components + one unused byte ---
+    //
+    // Four bytes per pixel in the byte order the name spells, where
+    // `X` is a padding byte: it is **not** alpha, readers ignore its
+    // value and writers emit 0. Layout tables elsewhere spell these
+    // `Rgb0` / `Bgr0` / `0Rgb` / `0Bgr`. The padding keeps every pixel
+    // 4-byte aligned, which is why framebuffers, 32-bit bitmap files
+    // with zero attribute bits and GPU upload paths use them; the
+    // alpha-bearing siblings at the same byte positions are `Rgba` /
+    // `Bgra` / `Argb` / `Abgr`. `has_alpha` is false; converting to an
+    // alpha layout sets alpha opaque, converting from one drops it.
+    /// Packed 8-bit RGB + one padding byte, 4 bytes/pixel in byte
+    /// order R, G, B, X.
+    Rgbx = 78,
+    /// Packed 8-bit BGR + one padding byte, 4 bytes/pixel in byte
+    /// order B, G, R, X.
+    Bgrx = 79,
+    /// One padding byte + packed 8-bit RGB, 4 bytes/pixel in byte
+    /// order X, R, G, B.
+    Xrgb = 80,
+    /// One padding byte + packed 8-bit BGR, 4 bytes/pixel in byte
+    /// order X, B, G, R.
+    Xbgr = 81,
 }
 
 impl PixelFormat {
@@ -943,6 +1017,75 @@ impl PixelFormat {
         )
     }
 
+    /// True for the single-plane RGB layouts: every pixel's R, G and
+    /// B components (plus alpha or padding, if any) are interleaved in
+    /// one plane — `Rgb24` / `Bgr24`, the 32-bit `Rgba` / `Bgra` /
+    /// `Argb` / `Abgr` and padded `Rgbx` / `Bgrx` / `Xrgb` / `Xbgr`,
+    /// the 16-bit `Rgb555*` / `Bgr555*` / `Rgb565*` / `Bgr565*` words,
+    /// `Rgb48Le` / `Rgba64Le` and the packed float `RgbF32Le` /
+    /// `RgbaF32Le`. Planar GBR(A) (see [`is_rgb`](Self::is_rgb)),
+    /// grey, YUV in any layout, palette, mono and CMYK are not.
+    ///
+    /// ```
+    /// use oxideav_core::PixelFormat;
+    /// assert!(PixelFormat::Rgb565Le.is_packed_rgb());
+    /// assert!(PixelFormat::Xrgb.is_packed_rgb());
+    /// assert!(!PixelFormat::Gbrp8.is_packed_rgb()); // planar
+    /// assert!(!PixelFormat::Pal8.is_packed_rgb()); // indices, not components
+    /// ```
+    pub fn is_packed_rgb(&self) -> bool {
+        matches!(
+            self,
+            Self::Rgb24
+                | Self::Bgr24
+                | Self::Rgba
+                | Self::Bgra
+                | Self::Argb
+                | Self::Abgr
+                | Self::Rgbx
+                | Self::Bgrx
+                | Self::Xrgb
+                | Self::Xbgr
+                | Self::Rgb555Le
+                | Self::Rgb555Be
+                | Self::Bgr555Le
+                | Self::Bgr555Be
+                | Self::Rgb565Le
+                | Self::Rgb565Be
+                | Self::Bgr565Le
+                | Self::Bgr565Be
+                | Self::Rgb48Le
+                | Self::Rgba64Le
+                | Self::RgbF32Le
+                | Self::RgbaF32Le
+        )
+    }
+
+    /// True for every layout whose components are R, G and B (with or
+    /// without alpha / padding), packed or planar: everything
+    /// [`is_packed_rgb`](Self::is_packed_rgb) accepts plus the planar
+    /// `Gbrp*` / `Gbrap*` family at every depth including float. Grey,
+    /// YUV, palette (indices into an RGB table are not RGB samples),
+    /// mono and CMYK are not.
+    pub fn is_rgb(&self) -> bool {
+        self.is_packed_rgb()
+            || matches!(
+                self,
+                Self::Gbrp8
+                    | Self::Gbrap8
+                    | Self::Gbrp10Le
+                    | Self::Gbrap10Le
+                    | Self::Gbrp12Le
+                    | Self::Gbrap12Le
+                    | Self::Gbrp14Le
+                    | Self::Gbrap14Le
+                    | Self::Gbrp16Le
+                    | Self::Gbrap16Le
+                    | Self::GbrpF32Le
+                    | Self::GbrapF32Le
+            )
+    }
+
     /// Number of planes in the stored layout. Packed and palette formats
     /// return 1; NV12/NV21 return 2; planar YUV without alpha and the
     /// `Gbrp*` variants return 3; YuvA and `Gbrap*` variants return 4.
@@ -1011,6 +1154,20 @@ impl PixelFormat {
             Self::Gray16Le | Self::Gray10Le | Self::Gray12Le => 16,
             Self::Rgb24 | Self::Bgr24 => 24,
             Self::Rgba | Self::Bgra | Self::Argb | Self::Abgr => 32,
+            // Padded 32-bit RGB: the unused byte is storage the pixel
+            // occupies, so the whole-pixel cost is reported like the
+            // alpha-bearing quads above.
+            Self::Rgbx | Self::Bgrx | Self::Xrgb | Self::Xbgr => 32,
+            // Packed 16-bit RGB: one 16-bit word per pixel (the unused
+            // top bit of 5-5-5 is still storage).
+            Self::Rgb555Le
+            | Self::Rgb555Be
+            | Self::Bgr555Le
+            | Self::Bgr555Be
+            | Self::Rgb565Le
+            | Self::Rgb565Be
+            | Self::Bgr565Le
+            | Self::Bgr565Be => 16,
             Self::Rgb48Le => 48,
             Self::Rgba64Le => 64,
             Self::Yuyv422 | Self::Uyvy422 => 16,
@@ -1275,12 +1432,24 @@ impl PixelFormat {
             | Self::Gbrp16Le
             | Self::Gbrap16Le => 2,
             // Packed multi-component: whole-pixel byte cost.
-            Self::Ya8 => 2,
+            Self::Ya8
+            | Self::Rgb555Le
+            | Self::Rgb555Be
+            | Self::Bgr555Le
+            | Self::Bgr555Be
+            | Self::Rgb565Le
+            | Self::Rgb565Be
+            | Self::Bgr565Le
+            | Self::Bgr565Be => 2,
             Self::Rgb24 | Self::Bgr24 => 3,
             Self::Rgba
             | Self::Bgra
             | Self::Argb
             | Self::Abgr
+            | Self::Rgbx
+            | Self::Bgrx
+            | Self::Xrgb
+            | Self::Xbgr
             | Self::Cmyk
             | Self::CmykInverted
             | Self::Ya16Le => 4,
@@ -1442,6 +1611,18 @@ mod tests {
         assert_eq!(PixelFormat::RgbaF32Le as u16, 67);
         assert_eq!(PixelFormat::GbrpF32Le as u16, 68);
         assert_eq!(PixelFormat::GbrapF32Le as u16, 69);
+        assert_eq!(PixelFormat::Rgb555Le as u16, 70);
+        assert_eq!(PixelFormat::Rgb555Be as u16, 71);
+        assert_eq!(PixelFormat::Bgr555Le as u16, 72);
+        assert_eq!(PixelFormat::Bgr555Be as u16, 73);
+        assert_eq!(PixelFormat::Rgb565Le as u16, 74);
+        assert_eq!(PixelFormat::Rgb565Be as u16, 75);
+        assert_eq!(PixelFormat::Bgr565Le as u16, 76);
+        assert_eq!(PixelFormat::Bgr565Be as u16, 77);
+        assert_eq!(PixelFormat::Rgbx as u16, 78);
+        assert_eq!(PixelFormat::Bgrx as u16, 79);
+        assert_eq!(PixelFormat::Xrgb as u16, 80);
+        assert_eq!(PixelFormat::Xbgr as u16, 81);
     }
 
     #[test]
@@ -2025,7 +2206,7 @@ mod tests {
     /// Every `PixelFormat` variant, in discriminant order. Extend this
     /// list whenever a variant is appended — the consistency tests
     /// below sweep it.
-    const ALL_PIXEL_FORMATS: [PixelFormat; 70] = [
+    const ALL_PIXEL_FORMATS: [PixelFormat; 82] = [
         PixelFormat::Yuv420P,
         PixelFormat::Yuv422P,
         PixelFormat::Yuv444P,
@@ -2096,11 +2277,23 @@ mod tests {
         PixelFormat::RgbaF32Le,
         PixelFormat::GbrpF32Le,
         PixelFormat::GbrapF32Le,
+        PixelFormat::Rgb555Le,
+        PixelFormat::Rgb555Be,
+        PixelFormat::Bgr555Le,
+        PixelFormat::Bgr555Be,
+        PixelFormat::Rgb565Le,
+        PixelFormat::Rgb565Be,
+        PixelFormat::Bgr565Le,
+        PixelFormat::Bgr565Be,
+        PixelFormat::Rgbx,
+        PixelFormat::Bgrx,
+        PixelFormat::Xrgb,
+        PixelFormat::Xbgr,
     ];
 
     #[test]
     fn all_pixel_formats_list_is_complete_and_distinct() {
-        // The list is discriminant-ordered and dense: 0..70 with no
+        // The list is discriminant-ordered and dense: 0..82 with no
         // gaps and no duplicates. A newly appended variant that isn't
         // added to the list will break the length or density check.
         let mut seen = std::collections::HashSet::new();
@@ -2431,6 +2624,117 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn packed_16bit_rgb_family_metadata() {
+        // One 16-bit word per pixel, single plane, no alpha (the unused
+        // 5-5-5 top bit is padding), no chroma grid, not planar / float
+        // / palette; storage cost 16 bits, rows 2 × width.
+        for fmt in [
+            PixelFormat::Rgb555Le,
+            PixelFormat::Rgb555Be,
+            PixelFormat::Bgr555Le,
+            PixelFormat::Bgr555Be,
+            PixelFormat::Rgb565Le,
+            PixelFormat::Rgb565Be,
+            PixelFormat::Bgr565Le,
+            PixelFormat::Bgr565Be,
+        ] {
+            assert!(fmt.is_packed_rgb(), "{fmt:?}");
+            assert!(fmt.is_rgb(), "{fmt:?}");
+            assert!(!fmt.is_planar(), "{fmt:?}");
+            assert!(!fmt.has_alpha(), "{fmt:?}");
+            assert!(!fmt.is_float(), "{fmt:?}");
+            assert!(!fmt.is_palette(), "{fmt:?}");
+            assert_eq!(fmt.implied_color_range(), None, "{fmt:?}");
+            assert_eq!(fmt.chroma_subsampling(), None, "{fmt:?}");
+            assert_eq!(fmt.plane_count(), 1, "{fmt:?}");
+            assert_eq!(fmt.bits_per_pixel_approx(), 16, "{fmt:?}");
+            assert_eq!(fmt.plane_row_bytes(0, 7), Some(14), "{fmt:?}");
+            assert_eq!(fmt.plane_dimensions(0, 7, 5), Some((7, 5)), "{fmt:?}");
+            assert_eq!(fmt.plane_dimensions(1, 7, 5), None, "{fmt:?}");
+            assert_eq!(fmt.frame_size_bytes(7, 5), Some(70), "{fmt:?}");
+        }
+    }
+
+    #[test]
+    fn padded_32bit_rgb_family_metadata() {
+        // Four bytes per pixel with one padding byte: the alpha-less
+        // twins of Rgba / Bgra / Argb / Abgr at the same byte cost.
+        for (fmt, alpha_twin) in [
+            (PixelFormat::Rgbx, PixelFormat::Rgba),
+            (PixelFormat::Bgrx, PixelFormat::Bgra),
+            (PixelFormat::Xrgb, PixelFormat::Argb),
+            (PixelFormat::Xbgr, PixelFormat::Abgr),
+        ] {
+            assert!(fmt.is_packed_rgb(), "{fmt:?}");
+            assert!(fmt.is_rgb(), "{fmt:?}");
+            assert!(!fmt.is_planar(), "{fmt:?}");
+            assert!(!fmt.has_alpha(), "{fmt:?}");
+            assert!(alpha_twin.has_alpha(), "{alpha_twin:?}");
+            assert!(!fmt.is_float(), "{fmt:?}");
+            assert!(!fmt.is_palette(), "{fmt:?}");
+            assert_eq!(fmt.chroma_subsampling(), None, "{fmt:?}");
+            assert_eq!(fmt.plane_count(), 1, "{fmt:?}");
+            assert_eq!(
+                fmt.bits_per_pixel_approx(),
+                alpha_twin.bits_per_pixel_approx(),
+                "{fmt:?}"
+            );
+            assert_eq!(fmt.plane_row_bytes(0, 7), Some(28), "{fmt:?}");
+            assert_eq!(
+                fmt.frame_size_bytes(7, 5),
+                alpha_twin.frame_size_bytes(7, 5),
+                "{fmt:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_packed_rgb_and_is_rgb_partition_every_format() {
+        for fmt in ALL_PIXEL_FORMATS {
+            // Packed RGB: exactly one plane, never planar, and is_rgb
+            // follows.
+            if fmt.is_packed_rgb() {
+                assert_eq!(fmt.plane_count(), 1, "{fmt:?}");
+                assert!(!fmt.is_planar(), "{fmt:?}");
+                assert!(fmt.is_rgb(), "{fmt:?}");
+            }
+            // Planar RGB is exactly the GBR(A) family.
+            let planar_rgb = fmt.is_rgb() && !fmt.is_packed_rgb();
+            assert_eq!(planar_rgb, format!("{fmt:?}").starts_with("Gbr"), "{fmt:?}");
+            // RGB never has a chroma grid; the RGB predicates never
+            // claim grey, YUV, palette, mono or CMYK.
+            if fmt.is_rgb() {
+                assert_eq!(fmt.chroma_subsampling(), None, "{fmt:?}");
+                assert!(!fmt.is_palette(), "{fmt:?}");
+                let name = format!("{fmt:?}");
+                assert!(
+                    !(name.starts_with("Gray")
+                        || name.starts_with("Yuv")
+                        || name.starts_with("Nv")
+                        || name.starts_with("Mono")
+                        || name.starts_with("Cmyk")
+                        || name.starts_with("Ya")
+                        || name.starts_with("Pal")
+                        || name.starts_with("Uyvy")),
+                    "{fmt:?}"
+                );
+            }
+        }
+        // The explicit counts, so a mislabelled new variant is caught
+        // by number and not only by shape.
+        let packed = ALL_PIXEL_FORMATS
+            .into_iter()
+            .filter(PixelFormat::is_packed_rgb)
+            .count();
+        assert_eq!(packed, 22);
+        let rgb = ALL_PIXEL_FORMATS
+            .into_iter()
+            .filter(PixelFormat::is_rgb)
+            .count();
+        assert_eq!(rgb, 22 + 12);
     }
 
     #[test]

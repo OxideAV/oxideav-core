@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Packed 16-bit and padded 32-bit RGB `PixelFormat`s** (discriminants
+  70–81, appended): `Rgb555Le` / `Rgb555Be` / `Bgr555Le` / `Bgr555Be`
+  (5-5-5 in one 16-bit word, the top bit unused — never alpha) and
+  `Rgb565Le` / `Rgb565Be` / `Bgr565Le` / `Bgr565Be` (5-6-5), the name
+  listing the components from the word's most significant bits downward
+  and the suffix giving the word's byte order; `Rgbx` / `Bgrx` / `Xrgb` /
+  `Xbgr` (8-bit RGB plus one padding byte at the position the name spells,
+  the alpha-less twins of `Rgba` / `Bgra` / `Argb` / `Abgr`). All are
+  single-plane, `has_alpha() == false`, `plane_row_bytes` 2 × / 4 × width,
+  `bits_per_pixel_approx` 16 / 32. Native pixels of 16-bit bitmap files,
+  15/16-bit and attribute-less 32-bit TGA, and framebuffers; until now
+  such sources had to widen to `Rgb24` on the registry.
+- `PixelFormat::is_packed_rgb()` (single-plane interleaved RGB, alpha or
+  padding included) and `is_rgb()` (packed RGB or the planar GBR(A)
+  family), completing the family predicates next to `is_planar` /
+  `has_alpha` / `is_float` / `is_palette`.
+
 ## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
 
 ### Other
