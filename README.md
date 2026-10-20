@@ -292,6 +292,14 @@ that wants them, on the same path the samples travel:
   list, never half a list. A frame blob refines the stream blob of the
   same kind: `frame.blob(&k).or_else(|| params.blob(&k).cloned())`.
 
+* **Custom kinds** follow one rule, `<producer>-<chunk>`: the producing
+  crate's short format name, a hyphen, the native chunk the bytes come
+  from, lower-case ASCII (`gif-comment`, `tga-extension-area`,
+  `iff-camg`). `BlobKind::format_native("iff", "CAMG")` spells it,
+  `producer()` reads the prefix back, `follows_naming_rule()` checks
+  it; the module docs list the names in use so producers reuse rather
+  than reinvent. A container's *string* metadata is not a blob — see
+  [Container metadata](#container-metadata).
 * **Encoder declaration** — `CodecCapabilities::embedded_blob_kinds:
   Vec<BlobKind>` (`with_embedded_blob_kind` / `with_embedded_blob_kinds`,
   `embeds_blob(&kind)`, `declares_embedded_blobs()`): the kinds an

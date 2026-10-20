@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   populated list is a promise both ways — listed kinds are embedded when
   present on the input, unlisted kinds dropped — so a caller can say
   whether ICC / Exif / XMP survive a save before encoding.
+- **Custom blob-kind naming rule** `<producer>-<chunk>` documented on
+  `blob` (lower-case ASCII letters / digits / hyphens, the producing
+  crate's format name first) with the established names listed
+  (`gif-comment`, `tga-extension-area`, `tga-developer-area`,
+  `iff-<chunk>`); `BlobKind::format_native(producer, chunk)` builds one,
+  `producer()` reads the prefix back (`None` for well-known kinds),
+  `follows_naming_rule()` is the lexical check (every well-known constant
+  passes).
 
 ## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
 

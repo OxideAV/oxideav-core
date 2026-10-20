@@ -42,6 +42,36 @@
 //! naming the native form rather than a well-known kind with foreign
 //! framing. Consumers never parse `data` here: they route it by
 //! `kind` (and `mime`) to whatever understands it.
+//!
+//! # Custom kinds: the `<producer>-<chunk>` rule
+//!
+//! A custom kind names a payload in a *format's own* structure — the
+//! framing is the payload. Its name is `<producer>-<chunk>`: the
+//! producing crate's short format name, a hyphen, then the native
+//! chunk / segment / field the bytes come from, all lower-case ASCII
+//! letters, digits and hyphens (no leading, trailing or doubled
+//! hyphen). [`BlobKind::format_native`] builds one,
+//! [`BlobKind::producer`] reads the prefix back and
+//! [`BlobKind::follows_naming_rule`] checks the spelling. Two
+//! producers never share a prefix, so a consumer that understands one
+//! format's chunk can route by prefix without sniffing the bytes, and
+//! a kind that spells the same reads the same everywhere.
+//!
+//! Kinds in use under the rule (the producing crate's README holds the
+//! exact payload; these are the established names, listed so a new
+//! producer reuses rather than reinvents):
+//!
+//! | kind | payload |
+//! |------|---------|
+//! | `gif-comment` | the text of a GIF Comment Extension, sub-blocks reassembled |
+//! | `tga-extension-area` | a TGA 2.0 extension area as stored |
+//! | `tga-developer-area` | a TGA 2.0 developer area (directory + fields) as stored |
+//! | `iff-<chunk>` (`iff-camg`, `iff-aspect`, `iff-copyright`, …) | one IFF chunk body as stored, named by its lower-cased chunk id (a non-alphanumeric id spelled out: `(c) ` → `copyright`) |
+//!
+//! Text that a container stores as *string metadata* (a title, an
+//! author, a comment with a key) is not a blob at all: it goes
+//! through [`Muxer::set_metadata`](crate::Muxer::set_metadata) and
+//! [`Demuxer::metadata`](crate::Demuxer::metadata).
 
 use std::borrow::Cow;
 use std::fmt;
@@ -87,9 +117,70 @@ impl BlobKind {
     }
 
     /// A kind not covered by the constants. The name is stored
-    /// verbatim; compare it byte-for-byte.
+    /// verbatim; compare it byte-for-byte. For a format's own chunk
+    /// prefer [`format_native`](Self::format_native), which spells the
+    /// name by the module's `<producer>-<chunk>` rule.
     pub fn custom(name: impl Into<String>) -> Self {
         Self(Cow::Owned(name.into()))
+    }
+
+    /// A custom kind for `chunk` of the format `producer` produces,
+    /// spelled by the `<producer>-<chunk>` rule (see the [module
+    /// docs](self)): the two parts joined by a hyphen and lower-cased
+    /// (ASCII). Nothing else is normalised — a chunk id with
+    /// characters outside letters, digits and hyphens is the caller's
+    /// to spell out (`(c) ` → `copyright`), and
+    /// [`follows_naming_rule`](Self::follows_naming_rule) reports the
+    /// result.
+    ///
+    /// ```
+    /// use oxideav_core::BlobKind;
+    /// let k = BlobKind::format_native("iff", "CAMG");
+    /// assert_eq!(k, "iff-camg");
+    /// assert_eq!(k.producer(), Some("iff"));
+    /// assert!(k.follows_naming_rule());
+    /// assert_eq!(BlobKind::format_native("gif", "comment"), BlobKind::custom("gif-comment"));
+    /// ```
+    pub fn format_native(producer: &str, chunk: &str) -> Self {
+        let mut name = String::with_capacity(producer.len() + 1 + chunk.len());
+        name.push_str(&producer.to_ascii_lowercase());
+        name.push('-');
+        name.push_str(&chunk.to_ascii_lowercase());
+        Self(Cow::Owned(name))
+    }
+
+    /// The `<producer>` prefix of a custom kind spelled by the
+    /// `<producer>-<chunk>` rule — the text before the first hyphen —
+    /// or `None` for a well-known kind (their names are format-neutral
+    /// even when hyphenated, like `cover-art`) and for a custom name
+    /// with no hyphen.
+    pub fn producer(&self) -> Option<&str> {
+        if self.is_well_known() {
+            return None;
+        }
+        let (producer, _) = self.0.split_once('-')?;
+        Some(producer)
+    }
+
+    /// `true` when the name is spelled by the module's rule: non-empty
+    /// lower-case ASCII letters, digits and hyphens, starting and
+    /// ending with a letter or digit, no doubled hyphen, and — for a
+    /// custom kind — at least one hyphen separating `<producer>` from
+    /// `<chunk>`. Every well-known constant passes. A lexical check
+    /// only: it does not know which producers exist.
+    pub fn follows_naming_rule(&self) -> bool {
+        let name = self.0.as_bytes();
+        let Some((&first, &last)) = name.first().zip(name.last()) else {
+            return false;
+        };
+        let alnum = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+        if !alnum(first) || !alnum(last) {
+            return false;
+        }
+        if !name.iter().all(|&b| alnum(b) || b == b'-') || name.windows(2).any(|w| w == b"--") {
+            return false;
+        }
+        self.is_well_known() || name.contains(&b'-')
     }
 
     /// The kind's name.
@@ -300,6 +391,70 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), 5, "well-known names are distinct");
+    }
+
+    #[test]
+    fn format_native_kinds_follow_the_producer_chunk_rule() {
+        let k = BlobKind::format_native("gif", "comment");
+        assert_eq!(k, BlobKind::custom("gif-comment"));
+        assert_eq!(k.producer(), Some("gif"));
+        assert!(k.follows_naming_rule());
+        assert!(!k.is_well_known());
+        // Lower-casing is the only normalisation.
+        assert_eq!(BlobKind::format_native("IFF", "CAMG"), "iff-camg");
+        assert_eq!(
+            BlobKind::format_native("tga", "extension-area"),
+            "tga-extension-area"
+        );
+        assert_eq!(
+            BlobKind::format_native("tga", "extension-area").producer(),
+            Some("tga")
+        );
+        // A chunk id the caller did not spell out fails the lexical
+        // check but is still a usable (byte-compared) kind.
+        let raw = BlobKind::format_native("iff", "(c) ");
+        assert_eq!(raw, "iff-(c) ");
+        assert!(!raw.follows_naming_rule());
+        assert_eq!(raw.producer(), Some("iff"));
+        // Names are the identity: a format-native spelling of a
+        // well-known name IS that kind.
+        assert_eq!(BlobKind::format_native("cover", "art"), BlobKind::COVER_ART);
+        assert!(BlobKind::format_native("cover", "art").is_well_known());
+    }
+
+    #[test]
+    fn naming_rule_and_producer_edge_cases() {
+        for k in BlobKind::WELL_KNOWN {
+            assert!(k.follows_naming_rule(), "{k}");
+            assert_eq!(k.producer(), None, "{k}");
+        }
+        for ok in [
+            "png-text",
+            "exr-attributes",
+            "iff-copyright",
+            "a-1",
+            "x2-y3-z4",
+        ] {
+            assert!(BlobKind::custom(ok).follows_naming_rule(), "{ok}");
+        }
+        for bad in [
+            "",
+            "-",
+            "exr",         // custom without a producer prefix
+            "GIF-comment", // upper case
+            "gif comment", // space
+            "gif_comment", // underscore
+            "-gif-comment",
+            "gif-comment-",
+            "gif--comment",
+            "iff-(c)",
+        ] {
+            assert!(!BlobKind::custom(bad).follows_naming_rule(), "{bad:?}");
+        }
+        assert_eq!(BlobKind::custom("exr").producer(), None);
+        assert_eq!(BlobKind::custom("").producer(), None);
+        assert_eq!(BlobKind::custom("-x").producer(), Some(""));
+        assert_eq!(BlobKind::custom("x2-y3-z4").producer(), Some("x2"));
     }
 
     #[test]
