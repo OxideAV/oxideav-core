@@ -20,6 +20,7 @@
 
 use std::fmt;
 
+use crate::blob::BlobKind;
 use crate::format::{MediaType, PixelFormat, SampleFormat};
 
 /// Default priority for software implementations. Lower numbers are preferred
@@ -90,6 +91,24 @@ pub struct CodecCapabilities {
     /// the first entry is the preferred conversion target for a stream
     /// whose format is not listed.
     pub accepted_sample_formats: Vec<SampleFormat>,
+    /// Metadata blob kinds this implementation's **encoder** embeds in
+    /// its output: the [`BlobKind`]s it reads from the input stream's
+    /// [`CodecParameters::blobs`](crate::CodecParameters::blobs) and
+    /// from frame records and writes into the coded output (an ICC
+    /// profile into the codestream's colour box, an Exif block into
+    /// its application segment, a format's own custom kind into its
+    /// native chunk). Empty — the default — means "nothing declared":
+    /// a caller cannot tell whether a blob it hands over survives, and
+    /// a gateway reports that as pass-through. When populated it is a
+    /// promise in both directions: every listed kind is embedded when
+    /// present on the input, every unlisted kind is dropped. Lets a
+    /// caller answer "will the ICC profile survive this save?" before
+    /// encoding a pixel. Attached with
+    /// [`with_embedded_blob_kind`](Self::with_embedded_blob_kind) /
+    /// [`with_embedded_blob_kinds`](Self::with_embedded_blob_kinds),
+    /// queried with [`embeds_blob`](Self::embeds_blob). Decoder-only
+    /// registrations leave it empty.
+    pub embedded_blob_kinds: Vec<BlobKind>,
 }
 
 impl CodecCapabilities {
@@ -114,6 +133,7 @@ impl CodecCapabilities {
             accepted_pixel_formats: Vec::new(),
             accepted_sample_rates: Vec::new(),
             accepted_sample_formats: Vec::new(),
+            embedded_blob_kinds: Vec::new(),
         }
     }
 
@@ -138,6 +158,7 @@ impl CodecCapabilities {
             accepted_pixel_formats: Vec::new(),
             accepted_sample_rates: Vec::new(),
             accepted_sample_formats: Vec::new(),
+            embedded_blob_kinds: Vec::new(),
         }
     }
 
@@ -267,6 +288,47 @@ impl CodecCapabilities {
         self
     }
 
+    /// Add one metadata blob kind the encoder embeds (see
+    /// [`Self::embedded_blob_kinds`]). Appends — call several times to
+    /// list several; a kind already listed is not added twice.
+    pub fn with_embedded_blob_kind(mut self, kind: impl Into<BlobKind>) -> Self {
+        let kind = kind.into();
+        if !self.embedded_blob_kinds.contains(&kind) {
+            self.embedded_blob_kinds.push(kind);
+        }
+        self
+    }
+
+    /// Replace the embedded blob-kind set wholesale (see
+    /// [`Self::embedded_blob_kinds`]). Duplicates are removed, first
+    /// occurrence kept.
+    pub fn with_embedded_blob_kinds(mut self, kinds: Vec<BlobKind>) -> Self {
+        self.embedded_blob_kinds.clear();
+        for kind in kinds {
+            if !self.embedded_blob_kinds.contains(&kind) {
+                self.embedded_blob_kinds.push(kind);
+            }
+        }
+        self
+    }
+
+    /// `true` when the encoder declares that it embeds blobs of `kind`
+    /// (see [`Self::embedded_blob_kinds`]). `false` both for an
+    /// unlisted kind and for an encoder that declares nothing — use
+    /// [`declares_embedded_blobs`](Self::declares_embedded_blobs) to
+    /// tell the two apart.
+    pub fn embeds_blob(&self, kind: &BlobKind) -> bool {
+        self.embedded_blob_kinds.contains(kind)
+    }
+
+    /// `true` when the encoder declares its embedded blob kinds at
+    /// all, i.e. [`Self::embedded_blob_kinds`] is non-empty; `false`
+    /// means every answer from [`embeds_blob`](Self::embeds_blob) is
+    /// "unknown", not "no".
+    pub fn declares_embedded_blobs(&self) -> bool {
+        !self.embedded_blob_kinds.is_empty()
+    }
+
     /// Pick the encoder-input sample rate for a stream at `rate` Hz:
     /// `rate` itself when it is accepted (or every rate is), otherwise
     /// the smallest accepted rate above it (no bandwidth is lost), and
@@ -349,6 +411,43 @@ mod tests {
         assert_eq!(opus.pick_sample_rate(44_100), 48_000);
         assert_eq!(opus.pick_sample_rate(11_025), 12_000);
         assert_eq!(opus.pick_sample_rate(96_000), 48_000);
+    }
+
+    #[test]
+    fn embedded_blob_kinds_default_empty_and_builders_dedupe() {
+        for caps in [
+            CodecCapabilities::audio("a"),
+            CodecCapabilities::video("v"),
+            CodecCapabilities::subtitle("s"),
+        ] {
+            assert!(caps.embedded_blob_kinds.is_empty(), "{caps}");
+            assert!(!caps.declares_embedded_blobs(), "{caps}");
+            assert!(!caps.embeds_blob(&BlobKind::ICC), "{caps}");
+        }
+        let c = CodecCapabilities::video("png")
+            .with_encode()
+            .with_embedded_blob_kind(BlobKind::ICC)
+            .with_embedded_blob_kind(BlobKind::EXIF)
+            .with_embedded_blob_kind("png-text")
+            .with_embedded_blob_kind(BlobKind::ICC);
+        assert_eq!(
+            c.embedded_blob_kinds,
+            vec![BlobKind::ICC, BlobKind::EXIF, BlobKind::custom("png-text")]
+        );
+        assert!(c.declares_embedded_blobs());
+        assert!(c.embeds_blob(&BlobKind::ICC));
+        assert!(c.embeds_blob(&BlobKind::custom("png-text")));
+        assert!(!c.embeds_blob(&BlobKind::XMP));
+        // Wholesale replacement dedupes and keeps first occurrences.
+        let c = c.with_embedded_blob_kinds(vec![BlobKind::XMP, BlobKind::IPTC, BlobKind::XMP]);
+        assert_eq!(c.embedded_blob_kinds, vec![BlobKind::XMP, BlobKind::IPTC]);
+        assert!(!c.embeds_blob(&BlobKind::ICC));
+        // Replacing with nothing returns to "undeclared".
+        let c = c.with_embedded_blob_kinds(Vec::new());
+        assert!(!c.declares_embedded_blobs());
+        // The declaration is orthogonal to every other field and to
+        // the flag string.
+        assert_eq!(c.flag_string(), ".EV...");
     }
 
     #[test]

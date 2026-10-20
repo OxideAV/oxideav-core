@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `false`) answers "will this key survive the save?" before anything is
   written. Format-native text (a comment extension, an annotation chunk, an
   author field) now has a home other than a custom blob.
+- **Encoder blob declaration**: `CodecCapabilities::embedded_blob_kinds:
+  Vec<BlobKind>` (new field on the `#[non_exhaustive]` struct, empty by
+  default) with `with_embedded_blob_kind` / `with_embedded_blob_kinds`
+  (deduplicating), `embeds_blob(&BlobKind)` and `declares_embedded_blobs()`.
+  Empty means "nothing declared" (a gateway reports pass-through); a
+  populated list is a promise both ways — listed kinds are embedded when
+  present on the input, unlisted kinds dropped — so a caller can say
+  whether ICC / Exif / XMP survive a save before encoding.
 
 ## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
 

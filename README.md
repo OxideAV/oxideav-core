@@ -292,6 +292,15 @@ that wants them, on the same path the samples travel:
   list, never half a list. A frame blob refines the stream blob of the
   same kind: `frame.blob(&k).or_else(|| params.blob(&k).cloned())`.
 
+* **Encoder declaration** — `CodecCapabilities::embedded_blob_kinds:
+  Vec<BlobKind>` (`with_embedded_blob_kind` / `with_embedded_blob_kinds`,
+  `embeds_blob(&kind)`, `declares_embedded_blobs()`): the kinds an
+  encoder reads from the input and writes into its output. Empty (the
+  default) is "nothing declared" — a gateway reports pass-through;
+  populated it is a promise both ways (listed kinds embedded when
+  present, unlisted kinds dropped), so "will the ICC profile survive
+  this save?" is answerable before a pixel is encoded.
+
 The mechanism is medium- and container-agnostic: the same API carries
 an ICC profile on an image stream and cover art on an audio stream, and
 nothing in core names a container. Container-level file attachments
