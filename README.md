@@ -37,6 +37,12 @@ pure-Rust media framework:
   what a decoder / encoder consumes, including the stream's
   `color_signal`, its `layers` description and its metadata `blobs`
   (ICC / Exif / XMP / IPTC / cover art / custom).
+  A stream's `pixel_format` is the container's claim; a decoder that
+  knows what it will emit (configuration record, negotiated hardware
+  session, fixed output policy) states the fact with
+  `Decoder::output_pixel_format()`, which takes precedence, and an
+  encoder states what it takes with
+  `CodecCapabilities::accepted_pixel_formats`.
 * **`TimeBase`** / **`Timestamp`** / **`Rational`** — rational time per
   stream; timestamps are integers in that base. Named constants
   (`MILLIS` / `MICROS` / `NANOS` / `MPEG_TS` / `AUDIO_48K` / `AUDIO_44K1`

@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `follows_naming_rule()` is the lexical check (every well-known constant
   passes).
 
+### Changed
+
+- `Decoder::output_pixel_format` docs state its precedence: `Some` is a
+  fact about the frames to come and overrides the container's
+  `CodecParameters::pixel_format` claim; `None` means "not known yet",
+  not "the container was right". Behaviour unchanged (default `None`).
+
 ## [0.1.40](https://github.com/OxideAV/oxideav-core/compare/v0.1.39...v0.1.40) - 2026-10-15
 
 ### Other

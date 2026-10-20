@@ -137,12 +137,25 @@ pub trait Decoder: Send {
     /// a decoder that runs serial.
     fn set_execution_context(&mut self, _ctx: &ExecutionContext) {}
 
-    /// Pixel layout of the video frames this decoder emits, when it
-    /// knows it before the first frame (typically from the codec's
-    /// configuration record in `extradata`) and the container did not
-    /// declare it in [`CodecParameters::pixel_format`](crate::CodecParameters).
-    /// Pipelines use it to convert into an encoder's accepted layouts.
-    /// Default `None` ("unknown — trust the stream parameters").
+    /// Pixel layout of the video frames this decoder emits, stated
+    /// before the first frame — from the codec's configuration record
+    /// in `extradata`, from a negotiated hardware session, or from the
+    /// decoder's fixed output policy. `Some` is a **fact about the
+    /// frames to come** and takes precedence over the container's
+    /// [`CodecParameters::pixel_format`](crate::CodecParameters::pixel_format)
+    /// (a stream label is a claim the container made; the decoder is
+    /// the one producing the planes). `None` — the default — means
+    /// "not known yet: trust the stream parameters", and a decoder
+    /// whose output depends on the first packet (an untagged file that
+    /// decides its layout per picture) answers `None` until it has
+    /// seen one and the real layout afterwards.
+    ///
+    /// Pipelines and gateways read it to label frames from codec-only
+    /// registrations and to pick the conversion into an encoder's
+    /// [`accepted_pixel_formats`](crate::CodecCapabilities::accepted_pixel_formats);
+    /// a frame whose plane shape disagrees with the stated layout is
+    /// the decoder's defect, not the consumer's. The answer may change
+    /// between frames only for a decoder that documents it.
     fn output_pixel_format(&self) -> Option<crate::PixelFormat> {
         None
     }
