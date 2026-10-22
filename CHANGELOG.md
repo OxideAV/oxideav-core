@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.41](https://github.com/OxideAV/oxideav-core/compare/v0.1.40...v0.1.41) - 2026-10-20
+
+### Other
+
+- :output_pixel_format: document its precedence over the container's pixel_format claim
+- the <producer>-<chunk> rule for custom kinds — format_native, producer, follows_naming_rule; the names in use documented
+- :embedded_blob_kinds: encoders declare which metadata blob kinds they embed
+- :set_metadata / carries_metadata_key: the write side of container text metadata
+- packed 16-bit 5-5-5 / 5-6-5 RGB+BGR in both byte orders, padded 32-bit RGB (Rgbx/Bgrx/Xrgb/Xbgr), is_packed_rgb / is_rgb
+- the semver job's comment no longer refers to a release-plz override (removed in 0bdaad9)
+- re-enable its semver check (user call); the CI cargo-semver-checks job stays
+
 ### Added
 
 - **Packed 16-bit and padded 32-bit RGB `PixelFormat`s** (discriminants
