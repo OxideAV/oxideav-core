@@ -1,6 +1,6 @@
 //! Uncompressed audio and video frames.
 
-use crate::blob::{decode_blobs, encode_blobs, BlobKind, MetadataBlob};
+use crate::blob::{BlobKind, MetadataBlob, decode_blobs, encode_blobs};
 use crate::layer::LayerIdentity;
 use crate::signal::ColorSignal;
 use crate::subtitle::SubtitleCue;

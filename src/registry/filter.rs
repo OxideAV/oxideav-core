@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::{filter::unknown_filter_error, PortSpec, Result, StreamFilter};
+use crate::{PortSpec, Result, StreamFilter, filter::unknown_filter_error};
 
 /// Factory for a named filter. The registry invokes this with the
 /// caller-supplied JSON `params` and the input port specs resolved

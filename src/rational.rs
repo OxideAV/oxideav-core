@@ -122,11 +122,7 @@ impl Rational {
         // a finite zero. (Two finite operands never reach this branch;
         // they are compared exactly above.)
         fn rank(n: i128, d: i128) -> i128 {
-            if d == 0 {
-                n.signum() * 2
-            } else {
-                n.signum()
-            }
+            if d == 0 { n.signum() * 2 } else { n.signum() }
         }
         rank(an, ad).cmp(&rank(bn, bd))
     }
@@ -209,11 +205,7 @@ impl Rational {
 #[inline]
 const fn sign_normalized(num: i64, den: i64) -> (i128, i128) {
     let (n, d) = (num as i128, den as i128);
-    if d < 0 {
-        (-n, -d)
-    } else {
-        (n, d)
-    }
+    if d < 0 { (-n, -d) } else { (n, d) }
 }
 
 /// Reduce a 128-bit `num/den` pair exactly to lowest terms (sign on the

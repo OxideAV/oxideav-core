@@ -603,10 +603,10 @@ impl ContainerRegistry {
         }
 
         // Fall back to extension lookup with the conventional weak score.
-        if let Some(ext) = ext_hint {
-            if let Some(name) = self.container_for_extension(ext) {
-                return Ok(name.to_owned());
-            }
+        if let Some(ext) = ext_hint
+            && let Some(name) = self.container_for_extension(ext)
+        {
+            return Ok(name.to_owned());
         }
 
         Err(Error::FormatNotFound(

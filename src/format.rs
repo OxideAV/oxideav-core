@@ -338,10 +338,10 @@ impl std::str::FromStr for ChannelLayout {
             "loro" | "lo/ro" => Self::LoRo,
             "ltrt" | "lt/rt" => Self::LtRt,
             other => {
-                if let Some(rest) = other.strip_prefix("discrete") {
-                    if let Ok(n) = rest.parse::<u16>() {
-                        return Ok(Self::DiscreteN(n));
-                    }
+                if let Some(rest) = other.strip_prefix("discrete")
+                    && let Ok(n) = rest.parse::<u16>()
+                {
+                    return Ok(Self::DiscreteN(n));
                 }
                 return Err(ParseChannelLayoutError(s.to_owned()));
             }

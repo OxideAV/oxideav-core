@@ -109,7 +109,7 @@ impl CodecOptions {
                 return Err(Error::invalid(format!(
                     "options json: expected object, got {}",
                     json_type_name(other)
-                )))
+                )));
             }
         };
         let mut out = Self::default();
@@ -123,7 +123,7 @@ impl CodecOptions {
                     return Err(Error::invalid(format!(
                         "option '{k}': structured values ({}) are not supported",
                         json_type_name(other)
-                    )))
+                    )));
                 }
             };
             out.insert(k.clone(), s);

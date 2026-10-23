@@ -368,30 +368,30 @@ impl CodecCapabilities {
     /// `CodecPreferences` filter).
     pub fn fits_params(&self, p: &crate::CodecParameters, for_encode: bool) -> bool {
         let _ = for_encode;
-        if let (Some(max), Some(w)) = (self.max_width, p.width) {
-            if w > max {
-                return false;
-            }
+        if let (Some(max), Some(w)) = (self.max_width, p.width)
+            && w > max
+        {
+            return false;
         }
-        if let (Some(max), Some(h)) = (self.max_height, p.height) {
-            if h > max {
-                return false;
-            }
+        if let (Some(max), Some(h)) = (self.max_height, p.height)
+            && h > max
+        {
+            return false;
         }
-        if let (Some(max), Some(br)) = (self.max_bitrate, p.bit_rate) {
-            if br > max {
-                return false;
-            }
+        if let (Some(max), Some(br)) = (self.max_bitrate, p.bit_rate)
+            && br > max
+        {
+            return false;
         }
-        if let (Some(max), Some(sr)) = (self.max_sample_rate, p.sample_rate) {
-            if sr > max {
-                return false;
-            }
+        if let (Some(max), Some(sr)) = (self.max_sample_rate, p.sample_rate)
+            && sr > max
+        {
+            return false;
         }
-        if let (Some(max), Some(ch)) = (self.max_channels, p.channels) {
-            if ch > max {
-                return false;
-            }
+        if let (Some(max), Some(ch)) = (self.max_channels, p.channels)
+            && ch > max
+        {
+            return false;
         }
         true
     }

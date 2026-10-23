@@ -92,7 +92,7 @@ impl<'a> BitReader<'a> {
 
     /// True if the reader is positioned on a byte boundary.
     pub fn is_byte_aligned(&self) -> bool {
-        self.bits_in_acc % 8 == 0
+        self.bits_in_acc.is_multiple_of(8)
     }
 
     /// Skip remaining bits in the current byte, leaving the reader byte-aligned.
@@ -292,7 +292,7 @@ impl BitWriter {
 
     /// True if the writer is currently on a byte boundary.
     pub fn is_byte_aligned(&self) -> bool {
-        self.bits_in_acc % 8 == 0
+        self.bits_in_acc.is_multiple_of(8)
     }
 
     /// Append `n` bits (0..=32) from the low `n` bits of `value`, MSB first.
@@ -476,7 +476,7 @@ impl<'a> BitReaderLsb<'a> {
 
     /// True if the reader is positioned on a byte boundary.
     pub fn is_byte_aligned(&self) -> bool {
-        self.bits_in_acc % 8 == 0
+        self.bits_in_acc.is_multiple_of(8)
     }
 
     /// Skip remaining bits in the current byte, leaving the reader
@@ -649,7 +649,7 @@ impl BitWriterLsb {
 
     /// True if the writer is currently on a byte boundary.
     pub fn is_byte_aligned(&self) -> bool {
-        self.bits_in_acc % 8 == 0
+        self.bits_in_acc.is_multiple_of(8)
     }
 
     /// Append `n` bits (0..=32) from the low `n` bits of `value`, LSB first.

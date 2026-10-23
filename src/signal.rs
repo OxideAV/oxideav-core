@@ -60,11 +60,7 @@ pub enum ColorRange {
 impl ColorRange {
     /// Map an H.273 `VideoFullRangeFlag` value to a range.
     pub fn from_full_range_flag(full: bool) -> Self {
-        if full {
-            Self::Full
-        } else {
-            Self::Limited
-        }
+        if full { Self::Full } else { Self::Limited }
     }
 
     /// The H.273 `VideoFullRangeFlag` for this range, or `None` when
@@ -791,9 +787,11 @@ mod tests {
         // A fully specified value is unchanged by any fallback.
         assert_eq!(ColorSignal::srgb().or(stream), ColorSignal::srgb());
         // Unspecified over unspecified stays unspecified.
-        assert!(ColorSignal::default()
-            .or(ColorSignal::default())
-            .is_unspecified());
+        assert!(
+            ColorSignal::default()
+                .or(ColorSignal::default())
+                .is_unspecified()
+        );
     }
 
     #[test]

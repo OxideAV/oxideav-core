@@ -85,7 +85,7 @@
 
 pub mod sync;
 
-use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::cell::Cell;
 use std::mem::{align_of, size_of};
 use std::ptr::{self, NonNull};

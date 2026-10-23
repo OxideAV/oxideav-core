@@ -5,10 +5,10 @@
 //! Deterministic: a fixed-seed LCG drives every case, so failures
 //! reproduce exactly.
 
+use oxideav_core::PixelFormat;
 use oxideav_core::bits::{BitReader, BitReaderLsb, BitWriter, BitWriterLsb};
 use oxideav_core::rational::Rational;
-use oxideav_core::time::{rescale, rescale_checked, rescale_rnd, Rounding, TimeBase, Timestamp};
-use oxideav_core::PixelFormat;
+use oxideav_core::time::{Rounding, TimeBase, Timestamp, rescale, rescale_checked, rescale_rnd};
 
 /// Minimal deterministic PRNG (64-bit LCG, high-bits output).
 struct Lcg(u64);
@@ -591,7 +591,7 @@ fn metadata_blob_wire_form_round_trips_and_rejects_every_prefix() {
                 };
                 let data: Vec<u8> = (0..len).map(|_| rng.next_u64() as u8).collect();
                 let b = MetadataBlob::new(kind, data);
-                if rng.next_u64() % 2 == 0 {
+                if rng.next_u64().is_multiple_of(2) {
                     b.with_mime(names[rng.next_u64() as usize % names.len()])
                 } else {
                     b

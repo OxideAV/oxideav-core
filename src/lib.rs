@@ -71,7 +71,7 @@ pub use layer::{LayerIdentity, LayerInfo};
 pub use limits::DecoderLimits;
 pub use metadata::{Attachment, Chapter};
 pub use options::{
-    parse_options, CodecOptions, CodecOptionsStruct, OptionField, OptionKind, OptionValue,
+    CodecOptions, CodecOptionsStruct, OptionField, OptionKind, OptionValue, parse_options,
 };
 pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
@@ -79,11 +79,11 @@ pub use rational::Rational;
 pub use registry::{
     BytesSource, CodecImplementation, CodecInfo, CodecRegistry, ContainerProbeFn,
     ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory,
-    ExtensionCandidate, FilterFactory, FilterRegistry, FrameSource, MultiTitleSource, Muxer,
-    OpenBytesFn, OpenDemuxerFn, OpenFramesFn, OpenMultiTitleFn, OpenMuxerFn, OpenPacketsFn,
-    PacketSource, PayloadMagicCandidate, ProbeCandidate, ProbeData, ProbeScore, ReadSeek,
-    RuntimeContext, SourceOutput, SourceRegistry, TagCandidate, WriteSeek, MAX_PROBE_SCORE,
-    PROBE_SCORE_EXTENSION,
+    ExtensionCandidate, FilterFactory, FilterRegistry, FrameSource, MAX_PROBE_SCORE,
+    MultiTitleSource, Muxer, OpenBytesFn, OpenDemuxerFn, OpenFramesFn, OpenMultiTitleFn,
+    OpenMuxerFn, OpenPacketsFn, PROBE_SCORE_EXTENSION, PacketSource, PayloadMagicCandidate,
+    ProbeCandidate, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceOutput, SourceRegistry,
+    TagCandidate, WriteSeek,
 };
 pub use signal::{
     ColorPrimaries, ColorRange, ColorSignal, MatrixCoefficients, TransferCharacteristics,
@@ -93,7 +93,7 @@ pub use stream::{
     ProbeFn, StreamInfo,
 };
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
-pub use time::{rescale, rescale_checked, rescale_rnd, Rounding, TimeBase, Timestamp};
+pub use time::{Rounding, TimeBase, Timestamp, rescale, rescale_checked, rescale_rnd};
 pub use vector::{
     DashPattern, FillRule, GradientStop, Group, ImageRef, LineCap, LineJoin, LinearGradient,
     MaskKind, Node, Paint, Path, PathCommand, PathNode, Point, RadialGradient, Rect, Rgba,

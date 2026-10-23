@@ -11,12 +11,12 @@
 //!
 //!     cargo bench -p oxideav-core --bench primitives
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use oxideav_core::bits::{BitReader, BitReaderLsb, BitWriter, BitWriterLsb};
 use oxideav_core::rational::Rational;
-use oxideav_core::time::{rescale, rescale_rnd, Rounding, TimeBase};
+use oxideav_core::time::{Rounding, TimeBase, rescale, rescale_rnd};
 
 /// Fixed-seed xorshift64 — deterministic synthetic input.
 struct Rng(u64);
@@ -114,7 +114,7 @@ fn bench_bits(c: &mut Criterion) {
     let mut rng = Rng(0xFEED_FACE_CAFE_BEEF);
     let counts: Vec<u32> = (0..FIELDS)
         .map(|_| {
-            if rng.next() % 32 == 0 {
+            if rng.next().is_multiple_of(32) {
                 (rng.next() % 200) as u32
             } else {
                 (rng.next() % 8) as u32

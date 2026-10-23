@@ -1543,9 +1543,10 @@ mod resolution_order_tests {
         );
         // An unclaimed tag yields an empty list, not an error.
         let other = CodecTag::fourcc(b"NONE");
-        assert!(reg
-            .resolve_tag_candidates(&ProbeContext::new(&other))
-            .is_empty());
+        assert!(
+            reg.resolve_tag_candidates(&ProbeContext::new(&other))
+                .is_empty()
+        );
     }
 
     #[test]
