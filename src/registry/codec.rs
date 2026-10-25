@@ -54,6 +54,20 @@ pub trait Decoder: Send {
 
     /// Pull the next decoded frame, if any. Returns `Error::NeedMore` when the
     /// decoder needs another packet.
+    ///
+    /// Besides media frames, a decoder whose output shape can change
+    /// mid-stream returns one [`Frame::StreamParams`] event immediately
+    /// before the first frame of a new shape (never for the first
+    /// shape, which [`output_params`](Self::output_params) announces).
+    /// When the event is returned, `output_params()` already describes
+    /// the new shape and
+    /// [`output_params_generation`](Self::output_params_generation) has
+    /// already moved; the next `Video` / `Audio` frame has the new
+    /// shape. At most one event per change; the same rule holds after
+    /// [`reset`](Self::reset) and while draining after
+    /// [`flush`](Self::flush). Callers that do not care skip it
+    /// ([`Frame::is_stream_params`]) — the counter carries the same
+    /// information.
     fn receive_frame(&mut self) -> Result<Frame>;
 
     /// Pull the next decoded frame as an arena-backed [`arena::sync::Frame`].
@@ -78,8 +92,19 @@ pub trait Decoder: Send {
     /// with its own arena-backed audio-frame type once the framework
     /// gains one. Until then, audio decoders should keep using
     /// [`Self::receive_frame`].
+    ///
+    /// **[`Frame::StreamParams`] events** have no arena representation:
+    /// the default implementation consumes them and returns the next
+    /// frame (whose [`arena::sync::FrameHeader`] carries the new shape);
+    /// [`output_params`](Self::output_params) /
+    /// [`output_params_generation`](Self::output_params_generation) have
+    /// moved by then, so a caller watching the counter still sees the
+    /// change.
     fn receive_arena_frame(&mut self) -> Result<arena::sync::Frame> {
-        let frame = self.receive_frame()?;
+        let mut frame = self.receive_frame()?;
+        while frame.is_stream_params() {
+            frame = self.receive_frame()?;
+        }
         match frame {
             Frame::Video(v) => video_frame_to_arena_sync_frame(&v),
             Frame::Audio(_) => Err(Error::unsupported(
@@ -90,6 +115,9 @@ pub trait Decoder: Send {
             )),
             Frame::Vector(_) => Err(Error::unsupported(
                 "receive_arena_frame: vector frames have no arena-backed representation",
+            )),
+            _ => Err(Error::unsupported(
+                "receive_arena_frame: frame kind has no arena-backed representation",
             )),
         }
     }
@@ -208,6 +236,15 @@ pub trait Decoder: Send {
     /// it, until [`output_params_generation`](Self::output_params_generation)
     /// changes).
     ///
+    /// **Mid-stream changes** are announced three ways that always
+    /// agree: this answer changes, the generation counter moves, and —
+    /// for a decoder that emits it — `receive_frame` returns a
+    /// [`Frame::StreamParams`] event carrying this same description,
+    /// immediately before the first frame of the new shape. When that
+    /// event is returned, this method already answers the new shape.
+    /// No event is emitted for the first shape (resolving `None` →
+    /// `Some`, or refining it, up to the first frame).
+    ///
     /// **Default and the relation to [`output_pixel_format`](Self::output_pixel_format):**
     /// the default implementation derives from `output_pixel_format()`
     /// — `Some` of a video [`CodecParameters`] carrying only
@@ -249,10 +286,14 @@ pub trait Decoder: Send {
     ///   so it only ever needs `!=` comparison) **at a frame
     ///   boundary**: the bump and the new `output_params()` answer
     ///   become visible together, when `receive_frame` returns the
-    ///   first frame with the new shape — not when the decoder parses
-    ///   the header announcing it, because frames of the old shape may
-    ///   still be queued in its reorder buffer. Once `receive_frame`
-    ///   has returned a frame, `output_params()` describes that frame.
+    ///   first frame with the new shape — or, for a decoder that emits
+    ///   the in-band [`Frame::StreamParams`] event, when it returns that
+    ///   event (immediately before that frame) — not when the decoder
+    ///   parses the header announcing it, because frames of the old
+    ///   shape may still be queued in its reorder buffer. Once
+    ///   `receive_frame` has returned a media frame, `output_params()`
+    ///   describes that frame. One change = one bump = at most one
+    ///   event.
     /// * It never changes while the description stays the same, and a
     ///   bump always comes with a changed description.
     /// * [`reset`](Self::reset) after a seek may change it (the new
@@ -281,6 +322,13 @@ pub trait Decoder: Send {
 /// whatever the decoder already knows without consuming the
 /// first-frame read, since the description may still be refined up to
 /// the first frame.
+///
+/// A consumer may instead (or additionally) watch the in-band
+/// [`Frame::StreamParams`] event with
+/// [`observe_frame`](Self::observe_frame); the two agree — the
+/// generation has already moved when the event is returned, and
+/// merging the same description twice reports no second change — so a
+/// mid-stream change is reported exactly once either way.
 ///
 /// ```
 /// # use oxideav_core::{CodecParameters, Decoder, OutputParamsWatch};
@@ -333,6 +381,20 @@ impl OutputParamsWatch {
         }
     }
 
+    /// Event-side counterpart of [`observe`](Self::observe): when
+    /// `frame` is a [`Frame::StreamParams`] event, merge its parameters
+    /// into `stream` through [`CodecParameters::merge_output_params`]
+    /// and return `true` when that changed an output-describing field;
+    /// for any other frame do nothing and return `false`. Needs no
+    /// decoder, so it also works downstream of a pipeline stage that
+    /// only forwards frames.
+    pub fn observe_frame(&mut self, frame: &Frame, stream: &mut CodecParameters) -> bool {
+        match frame.stream_params() {
+            Some(p) => stream.merge_output_params(p),
+            None => false,
+        }
+    }
+
     /// Merge what the decoder already knows into `stream` without
     /// recording a read — for use before the first frame. Returns
     /// `true` when an output-describing field of `stream` changed.
@@ -359,6 +421,12 @@ pub trait Encoder: Send {
 
     /// Feed one uncompressed frame. May or may not produce a packet
     /// immediately — call `receive_packet` in a loop afterwards.
+    ///
+    /// A [`Frame::StreamParams`] event (a mid-stream change of the
+    /// input shape) is rejected with [`Error::Unsupported`] unless the
+    /// encoder can re-configure for the new shape mid-stream; an
+    /// encoder that can, re-configures and keeps
+    /// [`output_params`](Self::output_params) describing its output.
     fn send_frame(&mut self, frame: &Frame) -> Result<()>;
 
     /// Pull the next encoded packet, if any. Returns `Error::NeedMore`
@@ -2236,5 +2304,292 @@ mod output_params_tests {
         assert_eq!(stream.pixel_format, Some(PixelFormat::Yuv420P10Le));
         assert_eq!(stream.width, Some(64));
         assert!(!watch.observe(&d, &mut stream));
+    }
+
+    /// Like [`Switching`] but also emits the in-band
+    /// [`Frame::StreamParams`] event immediately before the first frame
+    /// of a new mid-stream shape. Frames carry one real plane
+    /// (`32 × height` bytes) so the arena path can be exercised.
+    struct Eventing {
+        base: Base,
+        queued: std::collections::VecDeque<u32>,
+        current: Option<u32>,
+        generation: u64,
+        flushed: bool,
+    }
+
+    impl Eventing {
+        fn new() -> Self {
+            Self {
+                base: Base::new("mock-event"),
+                queued: Default::default(),
+                current: None,
+                generation: 0,
+                flushed: false,
+            }
+        }
+    }
+
+    impl Decoder for Eventing {
+        fn codec_id(&self) -> &CodecId {
+            &self.base.id
+        }
+        fn send_packet(&mut self, packet: &Packet) -> Result<()> {
+            let h = packet.data.first().copied().unwrap_or(0) as u32;
+            let h = if h == 0 {
+                *self.queued.back().or(self.current.as_ref()).unwrap_or(&16)
+            } else {
+                h
+            };
+            self.queued.push_back(h);
+            Ok(())
+        }
+        fn receive_frame(&mut self) -> Result<Frame> {
+            let Some(&h) = self.queued.front() else {
+                return Err(if self.flushed {
+                    Error::Eof
+                } else {
+                    Error::NeedMore
+                });
+            };
+            if let Some(cur) = self.current
+                && cur != h
+            {
+                // Mid-stream change: publish the new shape (answer +
+                // bump) together with the event, then the frame.
+                self.current = Some(h);
+                self.generation = self.generation.wrapping_add(1);
+                return Ok(Frame::StreamParams(Box::new(
+                    self.output_params().expect("shape known"),
+                )));
+            }
+            self.queued.pop_front();
+            self.current = Some(h);
+            Ok(Frame::Video(VideoFrame {
+                pts: None,
+                planes: vec![crate::VideoPlane {
+                    stride: 32,
+                    data: vec![0; 32 * h as usize],
+                }],
+            }))
+        }
+        fn flush(&mut self) -> Result<()> {
+            self.flushed = true;
+            Ok(())
+        }
+        fn reset(&mut self) -> Result<()> {
+            // Drop pending output; keep the shape of the last frame
+            // returned so a different shape after the seek is
+            // announced under the same rule.
+            self.queued.clear();
+            self.flushed = false;
+            Ok(())
+        }
+        fn output_params(&self) -> Option<CodecParameters> {
+            let h = self.current?;
+            let mut p = CodecParameters::video(self.base.id.clone());
+            p.width = Some(32);
+            p.height = Some(h);
+            p.pixel_format = Some(PixelFormat::Gray8);
+            Some(p)
+        }
+        fn output_pixel_format(&self) -> Option<PixelFormat> {
+            self.output_params().and_then(|p| p.pixel_format)
+        }
+        fn output_params_generation(&self) -> u64 {
+            self.generation
+        }
+    }
+
+    /// One received item, as a consumer sees it.
+    #[derive(Debug, PartialEq)]
+    enum Seen {
+        Video(u32),
+        Event(u32, u64),
+    }
+
+    fn shape(p: &CodecParameters) -> (Option<u32>, Option<u32>, Option<PixelFormat>) {
+        (p.width, p.height, p.pixel_format)
+    }
+
+    fn drain(d: &mut Eventing) -> Vec<Seen> {
+        let mut out = Vec::new();
+        while let Ok(f) = d.receive_frame() {
+            match f {
+                Frame::Video(v) => {
+                    let h = (v.planes[0].data.len() / v.planes[0].stride) as u32;
+                    assert_eq!(
+                        d.output_params().unwrap().height,
+                        Some(h),
+                        "output_params describes the frame just returned"
+                    );
+                    out.push(Seen::Video(h));
+                }
+                Frame::StreamParams(p) => {
+                    assert_eq!(
+                        d.output_params().as_ref().map(shape),
+                        Some(shape(&p)),
+                        "output_params already answers the new shape"
+                    );
+                    out.push(Seen::Event(p.height.unwrap(), d.output_params_generation()));
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn stream_params_frame_helpers() {
+        let mut p = CodecParameters::video(CodecId::new("x"));
+        p.width = Some(8);
+        let ev = Frame::StreamParams(Box::new(p.clone()));
+        assert_eq!(ev.pts(), None);
+        assert!(ev.is_stream_params());
+        assert_eq!(ev.stream_params().map(shape), Some(shape(&p)));
+        let media = Frame::Video(VideoFrame {
+            pts: Some(7),
+            planes: Vec::new(),
+        });
+        assert_eq!(media.pts(), Some(7));
+        assert!(!media.is_stream_params());
+        assert!(media.stream_params().is_none());
+        // Boxed: the event does not grow `Frame`.
+        assert!(std::mem::size_of::<Frame>() < std::mem::size_of::<CodecParameters>());
+        assert!(
+            std::mem::size_of::<Frame>()
+                <= std::mem::size_of::<crate::VectorFrame>()
+                    .max(std::mem::size_of::<crate::SubtitleCue>())
+                    + std::mem::size_of::<usize>()
+        );
+    }
+
+    #[test]
+    fn event_precedes_the_first_frame_of_the_new_shape_only() {
+        let mut d = Eventing::new();
+        for b in [16, 0, 24, 0, 0] {
+            d.send_packet(&pkt(b)).unwrap();
+        }
+        d.flush().unwrap();
+        assert_eq!(
+            drain(&mut d),
+            vec![
+                Seen::Video(16),
+                Seen::Video(16),
+                Seen::Event(24, 1),
+                Seen::Video(24),
+                Seen::Video(24),
+                Seen::Video(24),
+            ],
+            "no event for the first shape, one for the change, flush keeps order"
+        );
+        assert!(matches!(d.receive_frame(), Err(Error::Eof)));
+    }
+
+    #[test]
+    fn event_after_reset_follows_the_same_rule() {
+        let mut d = Eventing::new();
+        d.send_packet(&pkt(16)).unwrap();
+        assert_eq!(drain(&mut d), vec![Seen::Video(16)]);
+        // Pending output is dropped by the seek; it lands in a 24-high
+        // segment while 16 was the last shape out.
+        d.send_packet(&pkt(16)).unwrap();
+        d.reset().unwrap();
+        d.send_packet(&pkt(24)).unwrap();
+        d.send_packet(&pkt(0)).unwrap();
+        assert_eq!(
+            drain(&mut d),
+            vec![Seen::Event(24, 1), Seen::Video(24), Seen::Video(24)]
+        );
+        // Seek back to the original shape: another single event.
+        d.reset().unwrap();
+        d.send_packet(&pkt(16)).unwrap();
+        assert_eq!(drain(&mut d), vec![Seen::Event(16, 2), Seen::Video(16)]);
+        // Seek within the same shape: no event.
+        d.reset().unwrap();
+        d.send_packet(&pkt(16)).unwrap();
+        assert_eq!(drain(&mut d), vec![Seen::Video(16)]);
+    }
+
+    /// Feed the same switching stream and count reported changes after
+    /// the first frame for each consumer style.
+    fn changes_after_first(mode: &str) -> (usize, CodecParameters) {
+        let mut d = Eventing::new();
+        for b in [16, 0, 24, 0, 40, 0] {
+            d.send_packet(&pkt(b)).unwrap();
+        }
+        let mut stream = CodecParameters::video(CodecId::new("mock-event"));
+        stream.bit_rate = Some(99);
+        let mut watch = OutputParamsWatch::new();
+        let mut reports = Vec::new();
+        let dec: &mut dyn Decoder = &mut d;
+        while let Ok(f) = dec.receive_frame() {
+            let changed = match mode {
+                // Counter only, observed after every receive_frame.
+                "counter" => watch.observe(&*dec, &mut stream),
+                // Counter only, events skipped.
+                "counter-skip" => !f.is_stream_params() && watch.observe(&*dec, &mut stream),
+                // Event only (first shape via the first-frame read).
+                "event" => {
+                    if reports.is_empty() {
+                        watch.observe(&*dec, &mut stream)
+                    } else {
+                        watch.observe_frame(&f, &mut stream)
+                    }
+                }
+                // Both on every item.
+                _ => {
+                    let a = watch.observe_frame(&f, &mut stream);
+                    let b = watch.observe(&*dec, &mut stream);
+                    a | b
+                }
+            };
+            reports.push(changed);
+        }
+        assert!(reports[0], "{mode}: first frame resolves the shape");
+        (reports[1..].iter().filter(|c| **c).count(), stream)
+    }
+
+    #[test]
+    fn counter_and_event_report_each_change_exactly_once() {
+        for mode in ["counter", "counter-skip", "event", "both"] {
+            let (n, stream) = changes_after_first(mode);
+            assert_eq!(n, 2, "{mode}: two mid-stream changes, each once");
+            assert_eq!(stream.height, Some(40), "{mode}");
+            assert_eq!(stream.width, Some(32), "{mode}");
+            assert_eq!(stream.bit_rate, Some(99), "{mode}: container field kept");
+        }
+    }
+
+    #[test]
+    fn observe_frame_ignores_media_frames() {
+        let mut watch = OutputParamsWatch::new();
+        let mut stream = CodecParameters::video(CodecId::new("x"));
+        let before = stream.clone();
+        let f = Frame::Video(VideoFrame {
+            pts: None,
+            planes: Vec::new(),
+        });
+        assert!(!watch.observe_frame(&f, &mut stream));
+        assert_eq!(shape(&stream), shape(&before));
+    }
+
+    #[test]
+    fn arena_default_consumes_the_event() {
+        let mut d = Eventing::new();
+        for b in [16, 24] {
+            d.send_packet(&pkt(b)).unwrap();
+        }
+        let a = d.receive_arena_frame().unwrap();
+        assert_eq!(a.header().height, 16);
+        let gen_before = d.output_params_generation();
+        let b = d.receive_arena_frame().unwrap();
+        assert_eq!(
+            b.header().height,
+            24,
+            "event skipped, new-shape frame returned"
+        );
+        assert_eq!(d.output_params_generation(), gen_before + 1);
+        assert!(matches!(d.receive_arena_frame(), Err(Error::NeedMore)));
     }
 }

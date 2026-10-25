@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-band `Frame::StreamParams(Box<CodecParameters>)` event** for
+  mid-stream changes of a decoder's output shape (frames stay lean — no
+  format fields per frame). A decoder whose output can change returns it
+  from `receive_frame` immediately before the first frame of the new
+  shape; never for the first shape (still announced by `output_params()`).
+  When it is returned, `output_params()` already answers the new shape and
+  `output_params_generation()` has already moved, so counter and event
+  agree; at most one event per change; same rule after `reset()` and while
+  draining after `flush()`. Boxed so `Frame` does not grow.
+- `Frame::stream_params() -> Option<&CodecParameters>` and
+  `Frame::is_stream_params()`; `Frame::pts()` answers `None` for the event.
+- `OutputParamsWatch::observe_frame(&Frame, &mut CodecParameters) -> bool`:
+  merges a `StreamParams` event into the stream, no-op for media frames;
+  mixing it with `observe()` reports each change once.
+- Contract docs: filters receiving the event re-plan (forwarding their own
+  event when their output shape changes) or reject with
+  `Error::Unsupported`; `Encoder::send_frame` rejects it with
+  `Error::Unsupported` unless the encoder can re-configure.
+
+### Changed
+
+- `Decoder::receive_arena_frame`'s default skips `StreamParams` events
+  (no arena representation) and returns the next frame.
+
 ## [0.1.42](https://github.com/OxideAV/oxideav-core/compare/v0.1.41...v0.1.42) - 2026-10-25
 
 ### Other

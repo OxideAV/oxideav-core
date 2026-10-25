@@ -7,7 +7,9 @@ use crate::subtitle::SubtitleCue;
 use crate::vector::VectorFrame;
 
 /// A decoded chunk of uncompressed data: either audio samples, a video
-/// picture, or (for subtitle streams) a single styled cue.
+/// picture, (for subtitle streams) a single styled cue, a vector frame —
+/// or the in-band [`StreamParams`](Self::StreamParams) event announcing
+/// a mid-stream change of the output shape.
 ///
 /// Marked `#[non_exhaustive]` — consumers that match on variants must
 /// include a wildcard arm. This lets the crate add new frame kinds (data
@@ -29,6 +31,51 @@ pub enum Frame {
     /// `oxideav-pdf`) and consumed by vector renderers / writers.
     /// See [`crate::vector`] for the full primitive set.
     Vector(VectorFrame),
+    /// In-band announcement of a **mid-stream** change of the decoder's
+    /// output shape: the new resolved stream parameters (the same
+    /// description [`Decoder::output_params`](crate::Decoder::output_params)
+    /// now answers). It carries no picture or samples.
+    ///
+    /// Frames stay lean — width / height / pixel format / sample format
+    /// / rate are stated on the stream, not on every frame. The initial
+    /// shape is announced by `output_params()` (no event for it); this
+    /// event exists only so a consumer pulling frames sees a later change
+    /// in the frame stream itself, at the exact position it takes effect.
+    ///
+    /// The contract (for decoders that emit it — a decoder whose output
+    /// shape cannot change never does):
+    ///
+    /// * It is returned by [`Decoder::receive_frame`](crate::Decoder::receive_frame)
+    ///   only for a change **after the first frame** has been returned,
+    ///   **immediately before** the first `Video` / `Audio` frame of the
+    ///   new shape. The next media frame returned has the new shape; every
+    ///   frame returned before it had the old one.
+    /// * When it is returned, `output_params()` already describes the new
+    ///   shape and [`output_params_generation`](crate::Decoder::output_params_generation)
+    ///   has already been bumped — the counter and the event agree, so a
+    ///   consumer watching either sees exactly one change.
+    /// * At most one event per change; never one whose parameters equal
+    ///   the current shape.
+    /// * After [`reset`](crate::Decoder::reset) (a seek) the same rule
+    ///   applies relative to the shape of the last frame returned before
+    ///   the reset; draining after [`flush`](crate::Decoder::flush) keeps
+    ///   the ordering (queued old-shape frames, then the event, then the
+    ///   new-shape frames).
+    ///
+    /// Consumers fold it into the stream's parameters with
+    /// [`OutputParamsWatch::observe_frame`](crate::OutputParamsWatch::observe_frame)
+    /// (or [`CodecParameters::merge_output_params`](crate::CodecParameters::merge_output_params))
+    /// and re-plan converters / renderers. A filter receiving it re-plans
+    /// for the new input shape (forwarding its own `StreamParams` when its
+    /// output shape changes as a result) or rejects it with
+    /// [`Error::Unsupported`](crate::Error::Unsupported) when it cannot
+    /// adapt. An encoder's [`send_frame`](crate::Encoder::send_frame)
+    /// returns [`Error::Unsupported`](crate::Error::Unsupported) unless it
+    /// can re-configure for the new shape mid-stream.
+    ///
+    /// Boxed so the variant does not grow `Frame` (a [`CodecParameters`](crate::CodecParameters)
+    /// is larger than every media variant).
+    StreamParams(Box<crate::CodecParameters>),
 }
 
 impl Frame {
@@ -40,7 +87,25 @@ impl Frame {
             Self::Video(v) => v.pts,
             Self::Subtitle(s) => Some(s.start_us),
             Self::Vector(v) => v.pts,
+            Self::StreamParams(_) => None,
         }
+    }
+
+    /// The new stream parameters when this is a
+    /// [`StreamParams`](Self::StreamParams) event, `None` for a media
+    /// frame.
+    pub fn stream_params(&self) -> Option<&crate::CodecParameters> {
+        match self {
+            Self::StreamParams(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// `true` for a [`StreamParams`](Self::StreamParams) event — an
+    /// in-band announcement that carries no picture, samples, cue or
+    /// vector content.
+    pub fn is_stream_params(&self) -> bool {
+        matches!(self, Self::StreamParams(_))
     }
 }
 
@@ -59,8 +124,10 @@ impl Frame {
 /// the container's claim), and signals a mid-stream change (a chained
 /// stream switching sample rate) through
 /// [`Decoder::output_params_generation`](crate::Decoder::output_params_generation),
-/// one integer compared after `receive_frame`.
-/// [`OutputParamsWatch`](crate::OutputParamsWatch) folds both into the
+/// one integer compared after `receive_frame`, and in-band through a
+/// [`Frame::StreamParams`] event returned just before the first frame
+/// of the new shape.
+/// [`OutputParamsWatch`](crate::OutputParamsWatch) folds them into the
 /// stream's parameters in one call per frame.
 ///
 /// Sample layout is determined by the stream's `SampleFormat`:
@@ -97,8 +164,10 @@ pub struct AudioFrame {
 /// — authoritative over the container's claim), and signals a
 /// mid-stream change (a resolution switch at a keyframe) through
 /// [`Decoder::output_params_generation`](crate::Decoder::output_params_generation),
-/// one integer compared after `receive_frame`.
-/// [`OutputParamsWatch`](crate::OutputParamsWatch) folds both into the
+/// one integer compared after `receive_frame`, and in-band through a
+/// [`Frame::StreamParams`] event returned just before the first frame
+/// of the new shape.
+/// [`OutputParamsWatch`](crate::OutputParamsWatch) folds them into the
 /// stream's parameters in one call per frame.
 ///
 /// # Side-channels

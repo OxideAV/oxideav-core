@@ -168,6 +168,14 @@ pub trait StreamFilter: Send {
     /// Process one input frame on `port`. The filter may call
     /// [`FilterContext::emit`] zero or more times on any of its
     /// output ports before returning.
+    ///
+    /// A [`Frame::StreamParams`] event on `port` announces that the
+    /// upstream shape changes from the next frame on. A filter that can
+    /// adapt re-plans for the new input (and, when its own output shape
+    /// changes as a result, emits its own `Frame::StreamParams` on the
+    /// affected output ports before the first frame of the new shape);
+    /// a filter that cannot returns [`Error::Unsupported`]. A
+    /// pass-through filter forwards the event unchanged.
     fn push(&mut self, ctx: &mut dyn FilterContext, port: usize, frame: &Frame) -> Result<()>;
 
     /// Drain any internally buffered state at end-of-stream. Filters that
