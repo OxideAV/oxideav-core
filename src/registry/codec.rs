@@ -156,8 +156,196 @@ pub trait Decoder: Send {
     /// a frame whose plane shape disagrees with the stated layout is
     /// the decoder's defect, not the consumer's. The answer may change
     /// between frames only for a decoder that documents it.
+    ///
+    /// This is the narrow, older form of
+    /// [`output_params`](Self::output_params), whose default derives
+    /// from it. New decoders implement `output_params` (the whole
+    /// output description) and forward this method to it; consumers
+    /// should prefer `output_params`.
     fn output_pixel_format(&self) -> Option<crate::PixelFormat> {
         None
+    }
+
+    /// The decoder's resolved description of the frames it emits — the
+    /// **stream-level** home for what [`Frame`]s deliberately do not
+    /// repeat (a [`VideoFrame`](crate::VideoFrame) /
+    /// [`AudioFrame`](crate::AudioFrame) carries no width, height,
+    /// format or rate: the shape does not change 60 times a second, so
+    /// it is stated once, here, and re-stated only when it changes).
+    ///
+    /// Fields a decoder fills when it knows them:
+    ///
+    /// * **video** — [`width`](CodecParameters::width) /
+    ///   [`height`](CodecParameters::height) as the frames have them
+    ///   (the cropped / display size of the emitted planes, not the
+    ///   coded macroblock-aligned size),
+    ///   [`pixel_format`](CodecParameters::pixel_format),
+    ///   [`frame_rate`](CodecParameters::frame_rate) when the bitstream
+    ///   signals one, [`color_signal`](CodecParameters::color_signal)
+    ///   from the bitstream's own signalling, and
+    ///   [`layers`](CodecParameters::layers) for multi-layer output;
+    /// * **audio** — [`sample_rate`](CodecParameters::sample_rate),
+    ///   [`channels`](CodecParameters::channels),
+    ///   [`sample_format`](CodecParameters::sample_format),
+    ///   [`channel_layout`](CodecParameters::channel_layout).
+    ///
+    /// Fields the decoder does not know stay `None` / unspecified;
+    /// container-side fields (`extradata`, `bit_rate`, `tag`,
+    /// `language`, `blobs`, `options`, `limits`) are not the decoder's
+    /// to answer and are ignored by
+    /// [`CodecParameters::merge_output_params`], the helper that folds
+    /// this answer into a stream's parameters.
+    ///
+    /// `Some` is a **fact about the frames** and takes precedence over
+    /// the container's claim for every field it sets. `None` means "not
+    /// known yet: trust the stream parameters". A decoder answers as
+    /// soon as it has parsed what defines the output — its
+    /// configuration record in `extradata` at construction, or the
+    /// first sequence / frame header — ideally before the first frame
+    /// is returned, and at the latest once `receive_frame` has returned
+    /// the first frame. From then on the answer describes the frame
+    /// most recently returned by `receive_frame` (and the ones after
+    /// it, until [`output_params_generation`](Self::output_params_generation)
+    /// changes).
+    ///
+    /// **Default and the relation to [`output_pixel_format`](Self::output_pixel_format):**
+    /// the default implementation derives from `output_pixel_format()`
+    /// — `Some` of a video [`CodecParameters`] carrying only
+    /// `codec_id` and `pixel_format` when that answers `Some`, `None`
+    /// otherwise — so every decoder that implements the older narrow
+    /// query is described here for free. The direction is one-way:
+    /// `output_params` reads `output_pixel_format`, never the other
+    /// way round (no default recursion). A decoder that implements
+    /// `output_params` itself should also forward
+    /// `output_pixel_format` to it
+    /// (`self.output_params().and_then(|p| p.pixel_format)`) so callers
+    /// of the narrow query keep seeing the same answer. Consumers
+    /// should query `output_params` — it is the complete answer.
+    fn output_params(&self) -> Option<CodecParameters> {
+        self.output_pixel_format().map(|pf| {
+            let mut p = CodecParameters::video(self.codec_id().clone());
+            p.pixel_format = Some(pf);
+            p
+        })
+    }
+
+    /// A cheap change signal for [`output_params`](Self::output_params):
+    /// an integer that changes whenever the output description changes
+    /// **mid-stream** (a resolution switch at a keyframe, a new pixel
+    /// format at a new sequence header, a sample-rate change in a
+    /// chained stream). Consumers keep the last value they saw and
+    /// compare one integer after each successful `receive_frame`;
+    /// only when it differs do they re-read `output_params()`. Frames
+    /// carry nothing extra.
+    ///
+    /// The contract:
+    ///
+    /// * Consumers always read `output_params()` once after the first
+    ///   frame (or before it, if they need the shape up front) —
+    ///   resolving the description from `None` to `Some` before or at
+    ///   the first frame is **not** a change and needs no bump.
+    /// * After the first frame has been returned, a decoder whose
+    ///   output description changes increments the value (wrapping,
+    ///   so it only ever needs `!=` comparison) **at a frame
+    ///   boundary**: the bump and the new `output_params()` answer
+    ///   become visible together, when `receive_frame` returns the
+    ///   first frame with the new shape — not when the decoder parses
+    ///   the header announcing it, because frames of the old shape may
+    ///   still be queued in its reorder buffer. Once `receive_frame`
+    ///   has returned a frame, `output_params()` describes that frame.
+    /// * It never changes while the description stays the same, and a
+    ///   bump always comes with a changed description.
+    /// * [`reset`](Self::reset) after a seek may change it (the new
+    ///   position can be in a segment of a different shape) under the
+    ///   same rule: visible with the first frame returned afterwards.
+    ///
+    /// The default `0` — "never changes" — is correct for every decoder
+    /// whose output shape is fixed for the stream's lifetime.
+    /// [`OutputParamsWatch`] packages the consumer side in one call.
+    fn output_params_generation(&self) -> u64 {
+        0
+    }
+}
+
+/// Consumer-side helper for the [`Decoder::output_params`] /
+/// [`Decoder::output_params_generation`] contract: folds the decoder's
+/// output description into a stream's [`CodecParameters`] once, and
+/// again only when the decoder signals a mid-stream change — one
+/// integer compare per frame otherwise.
+///
+/// Call [`observe`](Self::observe) after **every** successful
+/// `receive_frame` (the first call always reads the description; later
+/// calls re-read only when the generation moved). Call
+/// [`prime`](Self::prime) before the first frame when the shape is
+/// needed up front (to size a renderer, pick a converter); it merges
+/// whatever the decoder already knows without consuming the
+/// first-frame read, since the description may still be refined up to
+/// the first frame.
+///
+/// ```
+/// # use oxideav_core::{CodecParameters, Decoder, OutputParamsWatch};
+/// fn pump(dec: &mut dyn Decoder, stream: &mut CodecParameters) -> oxideav_core::Result<()> {
+///     let mut watch = OutputParamsWatch::new();
+///     while let Ok(_frame) = dec.receive_frame() {
+///         if watch.observe(&*dec, stream) {
+///             // shape changed (or was first resolved): reconfigure
+///             // the converter / renderer from `stream` here.
+///         }
+///     }
+///     Ok(())
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OutputParamsWatch {
+    seen: Option<u64>,
+}
+
+impl OutputParamsWatch {
+    /// A watch that has not read the decoder yet.
+    pub const fn new() -> Self {
+        Self { seen: None }
+    }
+
+    /// Call after a successful `receive_frame`. Re-reads
+    /// [`Decoder::output_params`] on the first call and whenever
+    /// [`Decoder::output_params_generation`] differs from the value of
+    /// the last read, merging it into `stream` through
+    /// [`CodecParameters::merge_output_params`]. Returns `true` when
+    /// that changed an output-describing field of `stream`.
+    ///
+    /// A decoder that still answers `None` leaves `stream` untouched
+    /// and is asked again on the next call.
+    pub fn observe<D: Decoder + ?Sized>(
+        &mut self,
+        decoder: &D,
+        stream: &mut CodecParameters,
+    ) -> bool {
+        let generation = decoder.output_params_generation();
+        if self.seen == Some(generation) {
+            return false;
+        }
+        match decoder.output_params() {
+            Some(p) => {
+                self.seen = Some(generation);
+                stream.merge_output_params(&p)
+            }
+            None => false,
+        }
+    }
+
+    /// Merge what the decoder already knows into `stream` without
+    /// recording a read — for use before the first frame. Returns
+    /// `true` when an output-describing field of `stream` changed.
+    pub fn prime<D: Decoder + ?Sized>(&self, decoder: &D, stream: &mut CodecParameters) -> bool {
+        decoder
+            .output_params()
+            .is_some_and(|p| stream.merge_output_params(&p))
+    }
+
+    /// Forget the last read so the next [`observe`](Self::observe)
+    /// re-reads unconditionally (e.g. after swapping the decoder).
+    pub fn reset(&mut self) {
+        self.seen = None;
     }
 }
 
@@ -1764,5 +1952,289 @@ mod engine_tests {
         assert_eq!(impls.len(), 1);
         assert!(impls[0].engine_id.is_none());
         assert!(impls[0].engine_probe.is_none());
+    }
+}
+
+#[cfg(test)]
+mod output_params_tests {
+    use super::*;
+    use crate::{
+        ChannelLayout, ColorRange, ColorSignal, MediaType, Rational, SampleFormat, VideoFrame,
+    };
+
+    /// Shared plumbing for the mocks: the codec id they report.
+    struct Base {
+        id: CodecId,
+    }
+
+    impl Base {
+        fn new(id: &str) -> Self {
+            Self {
+                id: CodecId::new(id),
+            }
+        }
+    }
+
+    /// Implements nothing of the output-description surface.
+    struct Neither(Base);
+
+    impl Decoder for Neither {
+        fn codec_id(&self) -> &CodecId {
+            &self.0.id
+        }
+        fn send_packet(&mut self, _: &Packet) -> Result<()> {
+            Ok(())
+        }
+        fn receive_frame(&mut self) -> Result<Frame> {
+            Err(Error::NeedMore)
+        }
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Implements only the older narrow query.
+    struct PixOnly(Base);
+
+    impl Decoder for PixOnly {
+        fn codec_id(&self) -> &CodecId {
+            &self.0.id
+        }
+        fn send_packet(&mut self, _: &Packet) -> Result<()> {
+            Ok(())
+        }
+        fn receive_frame(&mut self) -> Result<Frame> {
+            Err(Error::NeedMore)
+        }
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn output_pixel_format(&self) -> Option<PixelFormat> {
+            Some(PixelFormat::Yuv420P10Le)
+        }
+    }
+
+    /// A decoder that changes resolution mid-stream: every packet whose
+    /// first byte is non-zero is a "keyframe" announcing that byte as
+    /// the new height; the shape becomes visible with the first frame
+    /// decoded from it, following the trait contract.
+    struct Switching {
+        base: Base,
+        queued: std::collections::VecDeque<u32>,
+        current: Option<u32>,
+        generation: u64,
+    }
+
+    impl Switching {
+        fn new() -> Self {
+            Self {
+                base: Base::new("mock-switch"),
+                queued: Default::default(),
+                current: None,
+                generation: 0,
+            }
+        }
+    }
+
+    impl Decoder for Switching {
+        fn codec_id(&self) -> &CodecId {
+            &self.base.id
+        }
+        fn send_packet(&mut self, packet: &Packet) -> Result<()> {
+            let h = packet.data.first().copied().unwrap_or(0) as u32;
+            let h = if h == 0 {
+                *self.queued.back().or(self.current.as_ref()).unwrap_or(&16)
+            } else {
+                h
+            };
+            self.queued.push_back(h);
+            Ok(())
+        }
+        fn receive_frame(&mut self) -> Result<Frame> {
+            let h = self.queued.pop_front().ok_or(Error::NeedMore)?;
+            if let Some(cur) = self.current
+                && cur != h
+            {
+                self.generation = self.generation.wrapping_add(1);
+            }
+            self.current = Some(h);
+            Ok(Frame::Video(VideoFrame {
+                pts: None,
+                planes: Vec::new(),
+            }))
+        }
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn output_params(&self) -> Option<CodecParameters> {
+            let h = self.current?;
+            let mut p = CodecParameters::video(self.base.id.clone());
+            p.width = Some(32);
+            p.height = Some(h);
+            p.pixel_format = Some(PixelFormat::Yuv420P);
+            Some(p)
+        }
+        fn output_pixel_format(&self) -> Option<PixelFormat> {
+            self.output_params().and_then(|p| p.pixel_format)
+        }
+        fn output_params_generation(&self) -> u64 {
+            self.generation
+        }
+    }
+
+    fn pkt(b: u8) -> Packet {
+        Packet::new(0, crate::TimeBase::new(1, 1), vec![b])
+    }
+
+    #[test]
+    fn default_without_any_answer_is_none_and_generation_zero() {
+        let d = Neither(Base::new("mock"));
+        assert!(d.output_params().is_none());
+        assert_eq!(d.output_params_generation(), 0);
+    }
+
+    #[test]
+    fn default_derives_from_output_pixel_format() {
+        let d = PixOnly(Base::new("mock-pix"));
+        let p = d.output_params().expect("derived from output_pixel_format");
+        assert_eq!(p.codec_id, CodecId::new("mock-pix"));
+        assert_eq!(p.media_type, MediaType::Video);
+        assert_eq!(p.pixel_format, Some(PixelFormat::Yuv420P10Le));
+        assert_eq!(p.width, None);
+        assert_eq!(p.height, None);
+        assert_eq!(d.output_params_generation(), 0);
+    }
+
+    #[test]
+    fn merge_decoder_wins_for_output_fields_container_keeps_the_rest() {
+        let mut stream = CodecParameters::video(CodecId::new("h264"));
+        stream.width = Some(1920);
+        stream.height = Some(1088);
+        stream.frame_rate = Some(Rational::new(25, 1));
+        stream.extradata = vec![1, 2, 3];
+        stream.bit_rate = Some(5_000_000);
+        stream.language = Some("en".into());
+        stream.color_signal = ColorSignal::from_code_points(1, 1, 1, false);
+
+        let mut out = CodecParameters::video(CodecId::new("h264"));
+        out.height = Some(1080);
+        out.pixel_format = Some(PixelFormat::Yuv420P);
+        out.color_signal = ColorSignal::default().with_range(ColorRange::Full);
+
+        assert!(stream.merge_output_params(&out));
+        assert_eq!(stream.width, Some(1920), "decoder None keeps container");
+        assert_eq!(stream.height, Some(1080), "decoder Some wins");
+        assert_eq!(stream.pixel_format, Some(PixelFormat::Yuv420P));
+        assert_eq!(stream.frame_rate, Some(Rational::new(25, 1)));
+        assert_eq!(stream.extradata, vec![1, 2, 3]);
+        assert_eq!(stream.bit_rate, Some(5_000_000));
+        assert_eq!(stream.language.as_deref(), Some("en"));
+        assert_eq!(stream.color_signal.range, ColorRange::Full);
+        assert_eq!(
+            stream.color_signal.primaries,
+            ColorSignal::from_code_points(1, 1, 1, false).primaries,
+            "unspecified decoder parts keep the container's"
+        );
+        assert!(!stream.merge_output_params(&out), "second merge is a no-op");
+    }
+
+    #[test]
+    fn merge_audio_keeps_count_and_layout_consistent() {
+        let mut stream = CodecParameters::audio(CodecId::new("mp3"))
+            .channels(2)
+            .channel_layout(ChannelLayout::Stereo);
+        stream.sample_rate = Some(44_100);
+        let mut out = CodecParameters::audio(CodecId::new("mp3")).channels(1);
+        out.sample_format = Some(SampleFormat::S16);
+        out.sample_rate = Some(48_000);
+        assert!(stream.merge_output_params(&out));
+        assert_eq!(stream.channels, Some(1));
+        assert_eq!(stream.channel_layout, None, "stale stereo layout dropped");
+        assert_eq!(stream.resolved_layout(), Some(ChannelLayout::Mono));
+        assert_eq!(stream.sample_rate, Some(48_000));
+        assert_eq!(stream.sample_format, Some(SampleFormat::S16));
+
+        // Layout-only answer re-derives a disagreeing count.
+        let mut stream = CodecParameters::audio(CodecId::new("aac")).channels(2);
+        let out = CodecParameters::audio(CodecId::new("aac")).channel_layout(ChannelLayout::Mono);
+        assert!(stream.merge_output_params(&out));
+        assert_eq!(stream.channels, Some(1));
+        assert_eq!(stream.channel_layout, Some(ChannelLayout::Mono));
+    }
+
+    #[test]
+    fn merge_of_empty_answer_changes_nothing() {
+        let mut stream = CodecParameters::video(CodecId::new("vp9"));
+        stream.width = Some(640);
+        let out = CodecParameters::video(CodecId::new("vp9"));
+        assert!(!stream.merge_output_params(&out));
+        assert_eq!(stream.width, Some(640));
+    }
+
+    #[test]
+    fn generation_bumps_with_the_first_frame_of_the_new_shape() {
+        let mut d = Switching::new();
+        assert!(d.output_params().is_none(), "nothing parsed yet");
+        d.send_packet(&pkt(16)).unwrap();
+        d.send_packet(&pkt(0)).unwrap();
+        // New shape announced while old-shape frames are still queued.
+        d.send_packet(&pkt(24)).unwrap();
+
+        d.receive_frame().unwrap();
+        assert_eq!(d.output_params().unwrap().height, Some(16));
+        assert_eq!(d.output_params_generation(), 0, "first resolve is no bump");
+        d.receive_frame().unwrap();
+        assert_eq!(d.output_params_generation(), 0, "same shape, no bump");
+        assert_eq!(d.output_params().unwrap().height, Some(16));
+        d.receive_frame().unwrap();
+        assert_eq!(d.output_params_generation(), 1);
+        assert_eq!(d.output_params().unwrap().height, Some(24));
+        assert_eq!(d.output_pixel_format(), Some(PixelFormat::Yuv420P));
+    }
+
+    #[test]
+    fn watch_merges_once_and_again_only_on_change() {
+        let mut d = Switching::new();
+        let mut stream = CodecParameters::video(CodecId::new("mock-switch"));
+        stream.bit_rate = Some(1234);
+        let mut watch = OutputParamsWatch::new();
+
+        // Nothing known yet: prime and observe leave the stream alone.
+        assert!(!watch.prime(&d, &mut stream));
+        assert!(!watch.observe(&d, &mut stream));
+
+        for b in [16, 0, 0, 24, 0] {
+            d.send_packet(&pkt(b)).unwrap();
+        }
+        let mut changes = Vec::new();
+        let dyn_dec: &mut dyn Decoder = &mut d;
+        while dyn_dec.receive_frame().is_ok() {
+            changes.push(watch.observe(&*dyn_dec, &mut stream));
+        }
+        assert_eq!(changes, vec![true, false, false, true, false]);
+        assert_eq!(stream.height, Some(24));
+        assert_eq!(stream.width, Some(32));
+        assert_eq!(stream.bit_rate, Some(1234));
+
+        // reset forces a re-read; same answer → no field change.
+        watch.reset();
+        assert!(!watch.observe(&d, &mut stream));
+        assert_eq!(watch, {
+            let mut w = OutputParamsWatch::new();
+            w.observe(&d, &mut stream.clone());
+            w
+        });
+    }
+
+    #[test]
+    fn watch_picks_up_the_derived_default() {
+        let d = PixOnly(Base::new("mock-pix"));
+        let mut stream = CodecParameters::video(CodecId::new("mock-pix"));
+        stream.width = Some(64);
+        let mut watch = OutputParamsWatch::new();
+        assert!(watch.observe(&d, &mut stream));
+        assert_eq!(stream.pixel_format, Some(PixelFormat::Yuv420P10Le));
+        assert_eq!(stream.width, Some(64));
+        assert!(!watch.observe(&d, &mut stream));
     }
 }

@@ -81,9 +81,9 @@ pub use registry::{
     ContainerRegistry, Decoder, DecoderFactory, Demuxer, Encoder, EncoderFactory,
     ExtensionCandidate, FilterFactory, FilterRegistry, FrameSource, MAX_PROBE_SCORE,
     MultiTitleSource, Muxer, OpenBytesFn, OpenDemuxerFn, OpenFramesFn, OpenMultiTitleFn,
-    OpenMuxerFn, OpenPacketsFn, PROBE_SCORE_EXTENSION, PacketSource, PayloadMagicCandidate,
-    ProbeCandidate, ProbeData, ProbeScore, ReadSeek, RuntimeContext, SourceOutput, SourceRegistry,
-    TagCandidate, WriteSeek,
+    OpenMuxerFn, OpenPacketsFn, OutputParamsWatch, PROBE_SCORE_EXTENSION, PacketSource,
+    PayloadMagicCandidate, ProbeCandidate, ProbeData, ProbeScore, ReadSeek, RuntimeContext,
+    SourceOutput, SourceRegistry, TagCandidate, WriteSeek,
 };
 pub use signal::{
     ColorPrimaries, ColorRange, ColorSignal, MatrixCoefficients, TransferCharacteristics,

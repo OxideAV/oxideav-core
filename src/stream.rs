@@ -675,6 +675,90 @@ impl CodecParameters {
             .or_else(|| self.channel_layout.map(|l| l.channel_count()))
     }
 
+    /// Fold a decoder's [`output_params`](crate::Decoder::output_params)
+    /// answer into these (stream / container) parameters. The decoder
+    /// produced the frames, so **it wins for every output-describing
+    /// field it sets**; fields it leaves `None` / unspecified keep the
+    /// container's value, and container-side fields are never touched.
+    ///
+    /// | field | rule |
+    /// |---|---|
+    /// | `width`, `height`, `pixel_format`, `frame_rate` | decoder's `Some` replaces |
+    /// | `sample_rate`, `channels`, `sample_format`, `channel_layout` | decoder's `Some` replaces; a kept layout / count that disagrees with the decoder's count is dropped / re-derived so the pair stays consistent |
+    /// | `color_signal` | field-wise: the decoder's specified parts over the container's ([`ColorSignal::or`]) |
+    /// | `layers` | the decoder's list replaces when non-empty |
+    /// | `codec_id`, `media_type`, `extradata`, `bit_rate`, `tag`, `language`, `blobs`, `options`, `limits`, `device_index` | kept |
+    ///
+    /// Returns `true` when any field of `self` changed — the signal a
+    /// consumer uses to reconfigure (converter, renderer, muxer).
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters, PixelFormat};
+    /// // What the container said: codec + size, no pixel format.
+    /// let mut stream = CodecParameters::video(CodecId::new("h264"));
+    /// stream.width = Some(1920);
+    /// stream.height = Some(1088);
+    /// stream.bit_rate = Some(8_000_000);
+    /// // What the decoder resolved from the SPS (cropped size).
+    /// let mut out = CodecParameters::video(CodecId::new("h264"));
+    /// out.width = Some(1920);
+    /// out.height = Some(1080);
+    /// out.pixel_format = Some(PixelFormat::Yuv420P);
+    /// assert!(stream.merge_output_params(&out));
+    /// assert_eq!(stream.height, Some(1080));
+    /// assert_eq!(stream.pixel_format, Some(PixelFormat::Yuv420P));
+    /// assert_eq!(stream.bit_rate, Some(8_000_000));
+    /// assert!(!stream.merge_output_params(&out)); // idempotent
+    /// ```
+    pub fn merge_output_params(&mut self, decoded: &CodecParameters) -> bool {
+        fn take<T: Copy + PartialEq>(dst: &mut Option<T>, src: Option<T>) -> bool {
+            match src {
+                Some(v) if *dst != Some(v) => {
+                    *dst = Some(v);
+                    true
+                }
+                _ => false,
+            }
+        }
+        let mut changed = false;
+        changed |= take(&mut self.width, decoded.width);
+        changed |= take(&mut self.height, decoded.height);
+        changed |= take(&mut self.pixel_format, decoded.pixel_format);
+        changed |= take(&mut self.frame_rate, decoded.frame_rate);
+        changed |= take(&mut self.sample_rate, decoded.sample_rate);
+        changed |= take(&mut self.sample_format, decoded.sample_format);
+        changed |= take(&mut self.channels, decoded.channels);
+        changed |= take(&mut self.channel_layout, decoded.channel_layout);
+        // Keep the count / layout pair consistent when the decoder
+        // stated only one of them.
+        match (decoded.channels, decoded.channel_layout) {
+            (Some(n), None) => {
+                if self.channel_layout.is_some_and(|l| l.channel_count() != n) {
+                    self.channel_layout = None;
+                    changed = true;
+                }
+            }
+            (None, Some(l)) => {
+                let n = l.channel_count();
+                if self.channels.is_some_and(|c| c != n) {
+                    self.channels = Some(n);
+                    changed = true;
+                }
+            }
+            _ => {}
+        }
+        let signal = decoded.color_signal.or(self.color_signal);
+        if signal != self.color_signal {
+            self.color_signal = signal;
+            changed = true;
+        }
+        if !decoded.layers.is_empty() && decoded.layers != self.layers {
+            self.layers = decoded.layers.clone();
+            changed = true;
+        }
+        changed
+    }
+
     /// Read-only access to the DoS-protection caps for any decoder
     /// constructed from these parameters. See [`DecoderLimits`].
     pub fn limits(&self) -> &DecoderLimits {

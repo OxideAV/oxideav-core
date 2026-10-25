@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - edition 2024, MSRV 1.95.
 
+### Added
+
+- **Decoder-reported stream parameters** — stream properties stay off the
+  frames (no width / height / format / rate repeated on every
+  `VideoFrame` / `AudioFrame`); the decoder states them once:
+  - `Decoder::output_params() -> Option<CodecParameters>` (default
+    method): the resolved description of the frames the decoder emits —
+    video width / height (the frames' cropped size), pixel format, frame
+    rate, colour signal, layers; audio sample rate, channels, sample
+    format, layout. Authoritative over the container's claim. The default
+    derives from `output_pixel_format()` (one-way — `output_params` reads
+    `output_pixel_format`, never the reverse), so decoders implementing
+    the narrow query are described for free; new decoders implement
+    `output_params` and forward `output_pixel_format` to it.
+  - `Decoder::output_params_generation() -> u64` (default `0`): a change
+    counter for mid-stream shape changes, bumped (wrapping) at a frame
+    boundary — visible together with the new `output_params()` when
+    `receive_frame` returns the first frame of the new shape. Resolving
+    the description before / at the first frame is not a change.
+  - `CodecParameters::merge_output_params(&CodecParameters) -> bool`:
+    folds the decoder's answer into a stream's parameters — the decoder's
+    `Some` wins for output-describing fields, the colour signal merges
+    field-wise, a stale channel count / layout is re-derived, container
+    fields (`codec_id`, `extradata`, `bit_rate`, `tag`, `language`,
+    `blobs`, …) are kept; returns whether anything changed.
+  - `OutputParamsWatch`: the consumer side in one call —
+    `observe(&decoder, &mut stream)` after every `receive_frame` reads the
+    description the first time and again only when the generation moved;
+    `prime` merges what is known before the first frame; `reset`.
+- `VideoFrame` / `AudioFrame` docs explain why frames carry no
+  stream-level properties and point to the decoder contract.
+
 ## [0.1.41](https://github.com/OxideAV/oxideav-core/compare/v0.1.40...v0.1.41) - 2026-10-20
 
 ### Other

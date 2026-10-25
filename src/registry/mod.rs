@@ -13,7 +13,7 @@ pub mod source;
 
 pub use codec::{
     CodecImplementation, CodecInfo, CodecRegistry, Decoder, DecoderFactory, Encoder,
-    EncoderFactory, PayloadMagicCandidate, TagCandidate,
+    EncoderFactory, OutputParamsWatch, PayloadMagicCandidate, TagCandidate,
 };
 pub use container::{
     ContainerProbeFn, ContainerRegistry, Demuxer, ExtensionCandidate, MAX_PROBE_SCORE, Muxer,

@@ -51,6 +51,18 @@ impl Frame {
 /// [`CodecParameters`](crate::CodecParameters). Frames stay lightweight
 /// because real-time playback moves thousands per second per stream.
 ///
+/// This is deliberate, not an omission: a property that does not change
+/// from one frame to the next is stated once, on the stream, instead of
+/// being repeated on every frame. The decoder states what it actually
+/// emits through [`Decoder::output_params`](crate::Decoder::output_params)
+/// (sample rate, channels, sample format, layout — authoritative over
+/// the container's claim), and signals a mid-stream change (a chained
+/// stream switching sample rate) through
+/// [`Decoder::output_params_generation`](crate::Decoder::output_params_generation),
+/// one integer compared after `receive_frame`.
+/// [`OutputParamsWatch`](crate::OutputParamsWatch) folds both into the
+/// stream's parameters in one call per frame.
+///
 /// Sample layout is determined by the stream's `SampleFormat`:
 /// - Interleaved formats: `data` has one plane; samples are stored as
 ///   `ch0 ch1 ... chN ch0 ch1 ... chN ...`.
@@ -76,6 +88,18 @@ pub struct AudioFrame {
 /// NOT carried per-frame — read them from the stream's
 /// [`CodecParameters`](crate::CodecParameters). Frames stay lightweight
 /// because real-time playback moves thousands per second per stream.
+///
+/// This is deliberate, not an omission: a property that does not change
+/// 60 times a second is stated once, on the stream, instead of being
+/// repeated on every frame. The decoder states what it actually emits
+/// through [`Decoder::output_params`](crate::Decoder::output_params)
+/// (the frames' width / height, pixel format, frame rate, colour signal
+/// — authoritative over the container's claim), and signals a
+/// mid-stream change (a resolution switch at a keyframe) through
+/// [`Decoder::output_params_generation`](crate::Decoder::output_params_generation),
+/// one integer compared after `receive_frame`.
+/// [`OutputParamsWatch`](crate::OutputParamsWatch) folds both into the
+/// stream's parameters in one call per frame.
 ///
 /// # Side-channels
 ///
