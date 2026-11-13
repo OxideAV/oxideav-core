@@ -28,8 +28,17 @@ pub enum MediaType {
 /// for `BackLeft`/`BackRight` in this taxonomy — the rear pair sits behind
 /// the listener on the room's centreline-extension, the side pair is at
 /// roughly ±90° from front. The enum is `#[non_exhaustive]` so additional
-/// positions (height channels for Atmos / Auro-3D, etc.) can be added
-/// without breaking downstream match arms.
+/// positions can be added without breaking downstream match arms.
+///
+/// The height, wide, bottom and second-LFE positions use the speaker
+/// names and labels of ETSI TS 103 190-2 Table A.30 ("Speaker
+/// Locations"), which references the ITU-R BS.2051 loudspeaker
+/// configurations; the same names appear as the room-anchored speaker
+/// labels of ETSI TS 103 420 clause 4.4 / Table B.10. Azimuths quoted on
+/// those variants are the nominal Table A.30 values (positive = towards
+/// the listener's left); real installations vary, so treat them as
+/// identification, not as a rendering contract. [`label`](Self::label)
+/// returns the short label of each position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ChannelPosition {
@@ -55,14 +64,105 @@ pub enum ChannelPosition {
     SideLeft,
     /// Side-right (Rs). Mirror of `SideLeft`.
     SideRight,
-    /// Top front-left. Atmos / Auro-3D height layer (placeholder).
+    /// Top front-left (Tfl). Upper layer, in front of the listener on
+    /// the left (nominal azimuth +45°).
     TopFrontLeft,
-    /// Top front-right. Atmos / Auro-3D height layer (placeholder).
+    /// Top front-right (Tfr). Mirror of `TopFrontLeft`.
     TopFrontRight,
-    /// Top back-left. Atmos / Auro-3D ceiling layer (placeholder).
+    /// Top back-left (Tbl). Upper layer, behind the listener on the left
+    /// (nominal azimuth +135°).
     TopBackLeft,
-    /// Top back-right. Atmos / Auro-3D ceiling layer (placeholder).
+    /// Top back-right (Tbr). Mirror of `TopBackLeft`.
     TopBackRight,
+    /// Wide-left (Lw). Listener plane, between the front-left and the
+    /// side-left speaker (nominal azimuth +60°).
+    WideLeft,
+    /// Wide-right (Rw). Mirror of `WideLeft`.
+    WideRight,
+    /// Top side-left (Tsl), also called top-middle left. Upper layer,
+    /// directly to the listener's left (nominal azimuth +90°).
+    TopSideLeft,
+    /// Top side-right (Tsr). Mirror of `TopSideLeft`.
+    TopSideRight,
+    /// Top front-centre (Tfc). Upper layer, front, on the centreline.
+    TopFrontCenter,
+    /// Top centre (Tc). Upper layer, directly above the listener.
+    TopCenter,
+    /// Top back-centre (Tbc). Upper layer, rear, on the centreline.
+    TopBackCenter,
+    /// Second low-frequency effects channel (LFE2). Sub-bass; when two
+    /// LFE channels are present, [`LowFrequency`](Self::LowFrequency)
+    /// is the left one and this is the right one.
+    LowFrequency2,
+    /// Bottom front-left (Bfl). Lower layer, below the front-left
+    /// speaker.
+    BottomFrontLeft,
+    /// Bottom front-right (Bfr). Mirror of `BottomFrontLeft`.
+    BottomFrontRight,
+    /// Bottom front-centre (Bfc). Lower layer, below the front-centre
+    /// speaker.
+    BottomFrontCenter,
+}
+
+impl ChannelPosition {
+    /// Short conventional label of the position: `"L"`, `"R"`, `"C"`,
+    /// `"LFE"`, `"Ls"`, `"Rs"`, `"Lb"`, `"Rb"`, `"Lc"`, `"Rc"`, `"Cs"`,
+    /// `"Lw"`, `"Rw"`, `"Tfl"`, `"Tfr"`, `"Tsl"`, `"Tsr"`, `"Tbl"`,
+    /// `"Tbr"`, `"Tfc"`, `"Tc"`, `"Tbc"`, `"LFE2"`, `"Bfl"`, `"Bfr"`,
+    /// `"Bfc"`.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::FrontLeft => "L",
+            Self::FrontRight => "R",
+            Self::FrontCenter => "C",
+            Self::LowFrequency => "LFE",
+            Self::BackLeft => "Lb",
+            Self::BackRight => "Rb",
+            Self::FrontLeftOfCenter => "Lc",
+            Self::FrontRightOfCenter => "Rc",
+            Self::BackCenter => "Cs",
+            Self::SideLeft => "Ls",
+            Self::SideRight => "Rs",
+            Self::TopFrontLeft => "Tfl",
+            Self::TopFrontRight => "Tfr",
+            Self::TopBackLeft => "Tbl",
+            Self::TopBackRight => "Tbr",
+            Self::WideLeft => "Lw",
+            Self::WideRight => "Rw",
+            Self::TopSideLeft => "Tsl",
+            Self::TopSideRight => "Tsr",
+            Self::TopFrontCenter => "Tfc",
+            Self::TopCenter => "Tc",
+            Self::TopBackCenter => "Tbc",
+            Self::LowFrequency2 => "LFE2",
+            Self::BottomFrontLeft => "Bfl",
+            Self::BottomFrontRight => "Bfr",
+            Self::BottomFrontCenter => "Bfc",
+        }
+    }
+
+    /// True for the low-frequency effects positions (`LowFrequency`,
+    /// `LowFrequency2`).
+    pub fn is_lfe(&self) -> bool {
+        matches!(self, Self::LowFrequency | Self::LowFrequency2)
+    }
+
+    /// True for the positions of the upper (height / ceiling) layer —
+    /// every `Top*` variant.
+    pub fn is_height(&self) -> bool {
+        matches!(
+            self,
+            Self::TopFrontLeft
+                | Self::TopFrontRight
+                | Self::TopBackLeft
+                | Self::TopBackRight
+                | Self::TopSideLeft
+                | Self::TopSideRight
+                | Self::TopFrontCenter
+                | Self::TopCenter
+                | Self::TopBackCenter
+        )
+    }
 }
 
 /// Audio channel layout — names a fixed ordered tuple of speaker
@@ -87,9 +187,18 @@ pub enum ChannelPosition {
 /// channel count (>8) or when the container failed to surface a layout
 /// flag. It is the only variant whose `position()` returns `None`.
 ///
-/// Marked `#[non_exhaustive]` so additional standard layouts (Atmos
-/// 7.1.4, Auro-3D 9.1, …) can be added without breaking match-exhaustive
-/// downstream consumers.
+/// # Immersive layouts
+///
+/// The `a.b.c` layouts (`a` listener-plane speakers, `b` LFE, `c` top
+/// speakers) extend the 5.1 / 7.1 orders above without reordering them:
+/// the bed channels come first in their existing order, then the wide
+/// pair `Lw, Rw` (9.1.x only), then the top pairs front → side → back.
+/// A layout with two top speakers uses the top-side pair `Tsl, Tsr`; one
+/// with four uses `Tfl, Tfr, Tbl, Tbr`; one with six uses all three
+/// pairs. Speaker names follow ETSI TS 103 190-2 Tables A.27 / A.30.
+///
+/// Marked `#[non_exhaustive]` so additional standard layouts can be
+/// added without breaking match-exhaustive downstream consumers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ChannelLayout {
@@ -125,6 +234,22 @@ pub enum ChannelLayout {
     /// AC-3 / AC-4 Lt/Rt stereo downmix (2ch). Two-channel matrix-encoded
     /// downmix carrying surround information for Dolby Pro Logic decoding.
     LtRt,
+    /// 5.1.2 (8ch): L, R, C, LFE, Ls, Rs, Tsl, Tsr.
+    Surround512,
+    /// 5.1.4 (10ch): L, R, C, LFE, Ls, Rs, Tfl, Tfr, Tbl, Tbr.
+    Surround514,
+    /// 7.1.2 (10ch): L, R, C, LFE, Ls, Rs, Lb, Rb, Tsl, Tsr.
+    Surround712,
+    /// 7.1.4 (12ch): L, R, C, LFE, Ls, Rs, Lb, Rb, Tfl, Tfr, Tbl, Tbr.
+    Surround714,
+    /// 9.1.2 (12ch): L, R, C, LFE, Ls, Rs, Lb, Rb, Lw, Rw, Tsl, Tsr.
+    Surround912,
+    /// 9.1.4 (14ch): L, R, C, LFE, Ls, Rs, Lb, Rb, Lw, Rw, Tfl, Tfr,
+    /// Tbl, Tbr.
+    Surround914,
+    /// 9.1.6 (16ch): L, R, C, LFE, Ls, Rs, Lb, Rb, Lw, Rw, Tfl, Tfr,
+    /// Tsl, Tsr, Tbl, Tbr.
+    Surround916,
     /// Discrete fallback: `n` channels with no recognised layout. Used for
     /// unusual / >8ch / unknown layouts surfaced by exotic codecs or
     /// containers that drop layout flags.
@@ -142,7 +267,11 @@ impl ChannelLayout {
             Self::Surround41 | Self::Surround50 => 5,
             Self::Surround51 | Self::Surround60 => 6,
             Self::Surround61 | Self::Surround70 => 7,
-            Self::Surround71 => 8,
+            Self::Surround71 | Self::Surround512 => 8,
+            Self::Surround514 | Self::Surround712 => 10,
+            Self::Surround714 | Self::Surround912 => 12,
+            Self::Surround914 => 14,
+            Self::Surround916 => 16,
             Self::DiscreteN(n) => *n,
         }
     }
@@ -208,6 +337,102 @@ impl ChannelLayout {
                 BackLeft,
                 BackRight,
             ],
+            Self::Surround512 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                TopSideLeft,
+                TopSideRight,
+            ],
+            Self::Surround514 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                TopFrontLeft,
+                TopFrontRight,
+                TopBackLeft,
+                TopBackRight,
+            ],
+            Self::Surround712 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+                TopSideLeft,
+                TopSideRight,
+            ],
+            Self::Surround714 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+                TopFrontLeft,
+                TopFrontRight,
+                TopBackLeft,
+                TopBackRight,
+            ],
+            Self::Surround912 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+                WideLeft,
+                WideRight,
+                TopSideLeft,
+                TopSideRight,
+            ],
+            Self::Surround914 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+                WideLeft,
+                WideRight,
+                TopFrontLeft,
+                TopFrontRight,
+                TopBackLeft,
+                TopBackRight,
+            ],
+            Self::Surround916 => &[
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                LowFrequency,
+                SideLeft,
+                SideRight,
+                BackLeft,
+                BackRight,
+                WideLeft,
+                WideRight,
+                TopFrontLeft,
+                TopFrontRight,
+                TopSideLeft,
+                TopSideRight,
+                TopBackLeft,
+                TopBackRight,
+            ],
             Self::DiscreteN(_) => &[],
         }
     }
@@ -234,6 +459,61 @@ impl ChannelLayout {
         self.positions()
             .iter()
             .any(|p| matches!(p, ChannelPosition::LowFrequency))
+    }
+
+    /// True when this layout carries at least one upper-layer (`Top*`)
+    /// speaker — see [`ChannelPosition::is_height`].
+    pub fn has_height(&self) -> bool {
+        self.positions().iter().any(ChannelPosition::is_height)
+    }
+
+    /// Slot of `position` in this layout's canonical order, or `None`
+    /// when the layout does not carry it (always `None` for `DiscreteN`).
+    pub fn index_of(&self, position: ChannelPosition) -> Option<usize> {
+        self.positions().iter().position(|p| *p == position)
+    }
+
+    /// Every named layout (all variants except `DiscreteN`), in
+    /// declaration order.
+    pub const NAMED: &'static [ChannelLayout] = &[
+        Self::Mono,
+        Self::Stereo,
+        Self::Stereo21,
+        Self::Surround30,
+        Self::Quad,
+        Self::Surround40,
+        Self::Surround41,
+        Self::Surround50,
+        Self::Surround51,
+        Self::Surround60,
+        Self::Surround61,
+        Self::Surround70,
+        Self::Surround71,
+        Self::LoRo,
+        Self::LtRt,
+        Self::Surround512,
+        Self::Surround514,
+        Self::Surround712,
+        Self::Surround714,
+        Self::Surround912,
+        Self::Surround914,
+        Self::Surround916,
+    ];
+
+    /// The named layout whose canonical order is exactly `positions`
+    /// (same speakers, same order), or `None` when there is none.
+    ///
+    /// `[FrontLeft, FrontRight]` answers [`Stereo`](Self::Stereo): the
+    /// `LoRo` / `LtRt` downmix carriers share its speakers and are never
+    /// inferred from positions alone.
+    pub fn from_positions(positions: &[ChannelPosition]) -> Option<ChannelLayout> {
+        if positions.is_empty() {
+            return None;
+        }
+        Self::NAMED
+            .iter()
+            .copied()
+            .find(|layout| layout.positions() == positions)
     }
 
     /// True when this layout carries surround information (more than two
@@ -264,6 +544,12 @@ impl ChannelLayout {
     /// | 7     | `Surround61` |
     /// | 8     | `Surround71` |
     /// | other | `DiscreteN`  |
+    ///
+    /// The mapping is frozen: counts above 8 stay `DiscreteN` even
+    /// though immersive layouts with those counts exist (10 channels is
+    /// both 5.1.4 and 7.1.2, 12 is both 7.1.4 and 9.1.2), so a producer
+    /// of such a layout names it explicitly — or looks it up with
+    /// [`from_positions`](Self::from_positions).
     pub fn from_count(n: u16) -> ChannelLayout {
         match n {
             1 => Self::Mono,
@@ -297,6 +583,13 @@ impl std::fmt::Display for ChannelLayout {
             Self::Surround71 => "7.1",
             Self::LoRo => "loro",
             Self::LtRt => "ltrt",
+            Self::Surround512 => "5.1.2",
+            Self::Surround514 => "5.1.4",
+            Self::Surround712 => "7.1.2",
+            Self::Surround714 => "7.1.4",
+            Self::Surround912 => "9.1.2",
+            Self::Surround914 => "9.1.4",
+            Self::Surround916 => "9.1.6",
             Self::DiscreteN(n) => return write!(f, "discrete{n}"),
         };
         f.write_str(s)
@@ -337,6 +630,13 @@ impl std::str::FromStr for ChannelLayout {
             "7.1" | "surround71" => Self::Surround71,
             "loro" | "lo/ro" => Self::LoRo,
             "ltrt" | "lt/rt" => Self::LtRt,
+            "5.1.2" | "surround512" => Self::Surround512,
+            "5.1.4" | "surround514" => Self::Surround514,
+            "7.1.2" | "surround712" => Self::Surround712,
+            "7.1.4" | "surround714" => Self::Surround714,
+            "9.1.2" | "surround912" => Self::Surround912,
+            "9.1.4" | "surround914" => Self::Surround914,
+            "9.1.6" | "surround916" => Self::Surround916,
             other => {
                 if let Some(rest) = other.strip_prefix("discrete")
                     && let Ok(n) = rest.parse::<u16>()
@@ -1832,6 +2132,163 @@ mod tests {
         }
         // DiscreteN returns an empty owned vec — positions are unknown.
         assert!(ChannelLayout::DiscreteN(7).positions_owned().is_empty());
+    }
+
+    #[test]
+    fn immersive_layouts_extend_the_bed_orders() {
+        use ChannelPosition::*;
+        let bed51 = ChannelLayout::Surround51.positions();
+        let bed71 = ChannelLayout::Surround71.positions();
+        let cases: [(ChannelLayout, &str, &[ChannelPosition], &[ChannelPosition]); 7] = [
+            (
+                ChannelLayout::Surround512,
+                "5.1.2",
+                bed51,
+                &[TopSideLeft, TopSideRight],
+            ),
+            (
+                ChannelLayout::Surround514,
+                "5.1.4",
+                bed51,
+                &[TopFrontLeft, TopFrontRight, TopBackLeft, TopBackRight],
+            ),
+            (
+                ChannelLayout::Surround712,
+                "7.1.2",
+                bed71,
+                &[TopSideLeft, TopSideRight],
+            ),
+            (
+                ChannelLayout::Surround714,
+                "7.1.4",
+                bed71,
+                &[TopFrontLeft, TopFrontRight, TopBackLeft, TopBackRight],
+            ),
+            (
+                ChannelLayout::Surround912,
+                "9.1.2",
+                bed71,
+                &[WideLeft, WideRight, TopSideLeft, TopSideRight],
+            ),
+            (
+                ChannelLayout::Surround914,
+                "9.1.4",
+                bed71,
+                &[
+                    WideLeft,
+                    WideRight,
+                    TopFrontLeft,
+                    TopFrontRight,
+                    TopBackLeft,
+                    TopBackRight,
+                ],
+            ),
+            (
+                ChannelLayout::Surround916,
+                "9.1.6",
+                bed71,
+                &[
+                    WideLeft,
+                    WideRight,
+                    TopFrontLeft,
+                    TopFrontRight,
+                    TopSideLeft,
+                    TopSideRight,
+                    TopBackLeft,
+                    TopBackRight,
+                ],
+            ),
+        ];
+        for (layout, name, bed, extra) in cases {
+            let want: Vec<ChannelPosition> = bed.iter().chain(extra).copied().collect();
+            assert_eq!(layout.positions(), want.as_slice(), "{name}");
+            assert_eq!(layout.channel_count() as usize, want.len(), "{name}");
+            assert_eq!(layout.to_string(), name);
+            assert_eq!(name.parse::<ChannelLayout>(), Ok(layout));
+            assert!(layout.has_lfe() && layout.has_height() && layout.is_surround());
+            assert_eq!(ChannelLayout::from_positions(&want), Some(layout));
+            assert_eq!(layout.index_of(extra[0]), Some(bed.len()));
+        }
+        assert!(!ChannelLayout::Surround71.has_height());
+        assert_eq!(ChannelLayout::Surround51.index_of(WideLeft), None);
+        assert_eq!(
+            "surround714".parse::<ChannelLayout>(),
+            Ok(ChannelLayout::Surround714)
+        );
+    }
+
+    #[test]
+    fn named_layouts_are_consistent_and_from_count_is_frozen() {
+        use std::collections::HashSet;
+        let mut names = HashSet::new();
+        for &layout in ChannelLayout::NAMED {
+            let positions = layout.positions();
+            assert_eq!(positions.len(), layout.channel_count() as usize);
+            // No speaker twice in one layout.
+            let unique: HashSet<_> = positions.iter().collect();
+            assert_eq!(unique.len(), positions.len(), "{layout}");
+            assert!(names.insert(layout.to_string()), "duplicate name {layout}");
+            assert_eq!(layout.to_string().parse::<ChannelLayout>(), Ok(layout));
+            // Positions identify the layout, except for the two stereo
+            // downmix carriers, which answer plain stereo.
+            let expect = match layout {
+                ChannelLayout::LoRo | ChannelLayout::LtRt => ChannelLayout::Stereo,
+                other => other,
+            };
+            assert_eq!(ChannelLayout::from_positions(positions), Some(expect));
+        }
+        assert_eq!(ChannelLayout::from_positions(&[]), None);
+        assert_eq!(
+            ChannelLayout::from_positions(&[
+                ChannelPosition::FrontRight,
+                ChannelPosition::FrontLeft
+            ]),
+            None
+        );
+        // Counts above 8 never infer an immersive layout.
+        for n in 9..=24u16 {
+            assert_eq!(ChannelLayout::from_count(n), ChannelLayout::DiscreteN(n));
+        }
+    }
+
+    #[test]
+    fn channel_position_labels_and_classes() {
+        use ChannelPosition::*;
+        let all = [
+            FrontLeft,
+            FrontRight,
+            FrontCenter,
+            LowFrequency,
+            BackLeft,
+            BackRight,
+            FrontLeftOfCenter,
+            FrontRightOfCenter,
+            BackCenter,
+            SideLeft,
+            SideRight,
+            TopFrontLeft,
+            TopFrontRight,
+            TopBackLeft,
+            TopBackRight,
+            WideLeft,
+            WideRight,
+            TopSideLeft,
+            TopSideRight,
+            TopFrontCenter,
+            TopCenter,
+            TopBackCenter,
+            LowFrequency2,
+            BottomFrontLeft,
+            BottomFrontRight,
+            BottomFrontCenter,
+        ];
+        let labels: std::collections::HashSet<_> = all.iter().map(|p| p.label()).collect();
+        assert_eq!(labels.len(), all.len());
+        assert_eq!(WideLeft.label(), "Lw");
+        assert_eq!(TopSideRight.label(), "Tsr");
+        assert_eq!(all.iter().filter(|p| p.is_height()).count(), 9);
+        assert_eq!(all.iter().filter(|p| p.is_lfe()).count(), 2);
+        assert!(!WideLeft.is_height() && !BottomFrontLeft.is_height());
     }
 
     #[test]

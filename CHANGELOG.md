@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Height, wide, bottom and second-LFE speaker positions** on
+  `ChannelPosition`: `WideLeft` / `WideRight` (Lw / Rw), `TopSideLeft` /
+  `TopSideRight` (Tsl / Tsr), `TopFrontCenter`, `TopCenter`,
+  `TopBackCenter`, `LowFrequency2`, `BottomFrontLeft` /
+  `BottomFrontRight` / `BottomFrontCenter`. Names and labels follow ETSI
+  TS 103 190-2 Table A.30 (the same labels as TS 103 420 Table B.10).
+  New helpers `ChannelPosition::label()`, `is_lfe()`, `is_height()`.
+- **Immersive channel layouts** on `ChannelLayout`: `Surround512`,
+  `Surround514`, `Surround712`, `Surround714`, `Surround912`,
+  `Surround914`, `Surround916` (`"5.1.2"` … `"9.1.6"` through `Display` /
+  `FromStr`, plus `surround512`-form aliases). Canonical order: the
+  existing 5.1 / 7.1 bed order, then `Lw, Rw`, then the top pairs front →
+  side → back (two tops = `Tsl, Tsr`; four = `Tfl, Tfr, Tbl, Tbr`).
+- `ChannelLayout::from_positions(&[ChannelPosition])` (exact-order
+  lookup), `ChannelLayout::NAMED`, `has_height()`, `index_of(position)`.
+
+Both enums were already `#[non_exhaustive]`; existing variants, orders
+and names are unchanged, and `ChannelLayout::from_count` still answers
+`DiscreteN` for every count above 8.
+
 ## [0.1.43](https://github.com/OxideAV/oxideav-core/compare/v0.1.42...v0.1.43) - 2026-10-25
 
 ### Other
