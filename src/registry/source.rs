@@ -54,6 +54,16 @@ pub trait PacketSource: Send {
     /// end of stream.
     fn next_packet(&mut self) -> Result<Packet>;
 
+    /// Read the next packet as a [`SharedPacket`](crate::packet::SharedPacket).
+    /// Same contract as
+    /// [`Demuxer::next_shared_packet`](crate::Demuxer::next_shared_packet):
+    /// the default wraps [`next_packet`](Self::next_packet) without a
+    /// copy; a source that hands out pieces of a buffer it keeps
+    /// overrides it to return views.
+    fn next_shared_packet(&mut self) -> Result<crate::packet::SharedPacket> {
+        self.next_packet().map(crate::packet::SharedPacket::from)
+    }
+
     /// Source-level metadata as ordered (key, value) pairs. Default is
     /// empty.
     fn metadata(&self) -> &[(String, String)] {

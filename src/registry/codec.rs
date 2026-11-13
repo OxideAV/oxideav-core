@@ -52,6 +52,22 @@ pub trait Decoder: Send {
     /// call `receive_frame` in a loop afterwards.
     fn send_packet(&mut self, packet: &Packet) -> Result<()>;
 
+    /// Feed one compressed packet handed over as a
+    /// [`SharedPacket`](crate::packet::SharedPacket) — same contract as
+    /// [`send_packet`](Self::send_packet).
+    ///
+    /// The default converts it (moving the payload when the packet is
+    /// its only holder, copying the viewed bytes otherwise) and calls
+    /// `send_packet`, so every decoder accepts shared packets. A decoder
+    /// that keeps its input around, or whose input is a view of a large
+    /// buffer, overrides this to hold the
+    /// [`SharedBytes`](crate::packet::SharedBytes) view instead of
+    /// copying it; such a decoder implements `send_packet` by wrapping
+    /// the bytes and calling this method.
+    fn send_shared_packet(&mut self, packet: crate::packet::SharedPacket) -> Result<()> {
+        self.send_packet(&packet.into_packet())
+    }
+
     /// Pull the next decoded frame, if any. Returns `Error::NeedMore` when the
     /// decoder needs another packet.
     ///

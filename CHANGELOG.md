@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ChannelLayout::from_positions(&[ChannelPosition])` (exact-order
   lookup), `ChannelLayout::NAMED`, `has_height()`, `index_of(position)`.
 
+- **Shared-bytes packet payload.** `SharedBytes` — an immutable, cheaply
+  clonable view of a range of a shared buffer (`From<Vec<u8>>` /
+  `From<Arc<[u8]>>` / `From<Arc<Vec<u8>>>` without a copy, `from_owner`
+  for any `AsRef<[u8]> + Send + Sync` owner, `slice` / `try_slice`,
+  `range`, `buffer`, `shares_buffer_with`, `into_vec`, derefs to
+  `[u8]`) — and `SharedPacket`, a `Packet` whose `data` is such a view
+  (`Packet::into_shared`, `SharedPacket::into_packet` / `to_packet`,
+  `From` both ways; `Packet` → `SharedPacket` → `Packet` moves the
+  payload).
+- Provided trait methods `Demuxer::next_shared_packet`,
+  `PacketSource::next_shared_packet`, `Decoder::send_shared_packet` and
+  `Muxer::write_shared_packet`. Each defaults to the `Packet` method, so
+  existing implementations and callers are unaffected; a demuxer that
+  holds its input in memory overrides `next_shared_packet` to hand out
+  views of that one buffer, and a decoder overrides `send_shared_packet`
+  to keep the view. `Packet` itself is unchanged (its `data` stays a
+  public `Vec<u8>`).
+
 Both enums were already `#[non_exhaustive]`; existing variants, orders
 and names are unchanged, and `ChannelLayout::from_count` still answers
 `DiscreteN` for every count above 8.

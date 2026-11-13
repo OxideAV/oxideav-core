@@ -24,6 +24,20 @@ pub trait Demuxer: Send {
     /// Read the next packet from any stream. Returns `Error::Eof` at end.
     fn next_packet(&mut self) -> Result<Packet>;
 
+    /// Read the next packet as a [`SharedPacket`](crate::packet::SharedPacket),
+    /// whose payload is a cheaply clonable view of a shared buffer.
+    ///
+    /// The default wraps [`next_packet`](Self::next_packet) (moving its
+    /// payload, no copy), so every demuxer answers this. A demuxer that
+    /// already holds the bytes it hands out — a whole file or a large
+    /// region kept in memory — overrides it to return views of that one
+    /// buffer instead of a fresh copy per packet. Both methods read the
+    /// same packet sequence and advance the same position; a caller uses
+    /// one or the other, or mixes them freely.
+    fn next_shared_packet(&mut self) -> Result<crate::packet::SharedPacket> {
+        self.next_packet().map(crate::packet::SharedPacket::from)
+    }
+
     /// Hint that only the listed stream indices will be consumed by the
     /// pipeline. Demuxers that can efficiently skip inactive streams at
     /// the container level (e.g., MKV cluster-aware, MP4 trak-aware)
@@ -94,6 +108,16 @@ pub trait Muxer: Send {
 
     /// Write one compressed packet into the container.
     fn write_packet(&mut self, packet: &Packet) -> Result<()>;
+
+    /// Write one compressed packet handed over as a
+    /// [`SharedPacket`](crate::packet::SharedPacket). The default
+    /// converts it (moving the payload when the packet is its only
+    /// holder, copying the viewed bytes otherwise) and calls
+    /// [`write_packet`](Self::write_packet); a muxer that only reads the
+    /// payload overrides it to write straight from the view.
+    fn write_shared_packet(&mut self, packet: crate::packet::SharedPacket) -> Result<()> {
+        self.write_packet(&packet.into_packet())
+    }
 
     /// Finalize the file (write index, patch in total sizes, etc.).
     fn write_trailer(&mut self) -> Result<()>;

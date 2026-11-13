@@ -14,6 +14,15 @@ pure-Rust media framework:
   demuxers and remuxers. An `end_pts()` accessor returns the
   overflow-checked `pts + duration` for muxers that need a per-
   packet end timestamp.
+* **`SharedPacket`** / **`SharedBytes`** — the same packet with its
+  payload as a cheaply clonable view of a shared buffer
+  (`SharedBytes::from(vec)`, `.slice(a..b)`, `.buffer()`), for
+  producers that hand out many payloads from bytes they already hold.
+  `Demuxer::next_shared_packet`, `PacketSource::next_shared_packet`,
+  `Decoder::send_shared_packet` and `Muxer::write_shared_packet` are
+  provided methods bridging to the `Packet` ones, so it flows through
+  components that only know `Packet`; overriding both ends of a hop
+  removes the copy.
 * **`Frame`** — one uncompressed audio / video / subtitle chunk.
   `VideoFrame` can carry typed in-band side-channels alongside its
   pixel planes: a palette for palette-indexed (`Pal8`) content
