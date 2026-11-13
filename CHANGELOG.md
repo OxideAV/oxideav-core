@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-core/compare/v0.1.43...v0.2.0) - 2026-11-13
+
+### Other
+
+- SharedBytes + SharedPacket: cheaply clonable shared-buffer packet payloads
+- ChannelPosition wide / top-side / top-centre / bottom / LFE2 + immersive ChannelLayout names (5.1.2 … 9.1.6)
+
 ### Added
 
 - **Height, wide, bottom and second-LFE speaker positions** on
