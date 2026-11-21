@@ -274,6 +274,11 @@ optional and defaults to "unspecified".
 | `field_order` | `FieldOrder` | `Unspecified`, `Progressive`, `TopFirst`, `BottomFirst`, the two displayed-vs-stored cross orders, `Interlaced` (order unknown); `from_field_atom` / `to_field_atom` map the QuickTime `fiel` byte pair |
 | `display_matrix` | `Option<DisplayMatrix>` | the 3×3 frame → surface matrix of §6.2.2 in its stored fixed-point form (`from_fixed` / `to_fixed` round-trip exactly); `orientation()` reduces it to a `DisplayOrientation` — horizontal mirror, then 0 / 90 / 180 / 270° clockwise — when it is one of those eight, and `DisplayMatrix::from_orientation[_in]` builds them |
 
+`DisplayMatrix::then` composes a track matrix with the movie matrix in
+fixed point; `VideoGeometry::pixel_aspect_for_display` and
+`display_aspect` convert between a sample shape and a display size or
+frame aspect ratio (4:3, 16:9) for formats that state the latter.
+
 `CodecParameters` builders: `with_geometry`, `with_pixel_aspect`,
 `with_clean_aperture`, `with_field_order`, `with_display_matrix`
 (accepts a matrix or an orientation). `CodecParameters::display_size()`
@@ -296,6 +301,14 @@ downstream stages nothing is left to trim.
 `GaplessInfo::valid_range(decoded_samples)` resolves the three into a
 clamped index range. Builders: `with_gapless`, `with_priming_samples`,
 `with_padding_samples`.
+
+Cost of the two records, `cargo bench --bench primitives --
+stream_params` (Apple M-series, medians of three runs, other builds
+running): `CodecParameters::clone` 35.8 → 39.0 ns;
+`merge_output_params` with nothing to change 2.4 → 3.5 ns (6.9 ns
+before the merge learned to skip records the decoder left
+unspecified). Both run per stream or per shape change, never per
+frame.
 
 ## Vector scene
 

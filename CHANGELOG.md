@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `DisplayMatrix::then` (track matrix ∘ movie matrix, exact in the
+  stored fixed-point formats, rounding to nearest, saturating),
+  `VideoGeometry::pixel_aspect_for_display` and
+  `VideoGeometry::display_aspect` (sample shape ↔ display size / frame
+  aspect ratio).
+- `stream_params` group in the `primitives` bench
+  (`CodecParameters::clone`, `merge_output_params` changed /
+  unchanged).
 - **Filter effects in the vector scene** — `Node::Filter(FilterNode)`
   applies a `FilterEffect` (filter region + units, ordered
   `FilterPrimitive` list, the paints behind the fill / stroke inputs)

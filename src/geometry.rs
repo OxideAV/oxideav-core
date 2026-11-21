@@ -616,6 +616,56 @@ impl DisplayMatrix {
         out
     }
 
+    /// The matrix equivalent to applying `self` and then `next` — the
+    /// order in which §6.2.2 composes a track's matrix (`self`) with
+    /// the movie-level matrix (`next`).
+    ///
+    /// Computed exactly in the stored fixed-point formats with
+    /// round-to-nearest; a value that leaves the `i32` range saturates.
+    ///
+    /// ```
+    /// # use oxideav_core::geometry::{DisplayMatrix, DisplayOrientation};
+    /// let track = DisplayMatrix::from_orientation(DisplayOrientation::rotated_cw(1));
+    /// let movie = DisplayMatrix::from_orientation(DisplayOrientation::mirrored_horizontally());
+    /// assert_eq!(
+    ///     track.then(movie).orientation(),
+    ///     Some(DisplayOrientation::rotated_cw(1).then(DisplayOrientation::mirrored_horizontally())),
+    /// );
+    /// ```
+    pub const fn then(self, next: Self) -> Self {
+        // Row-vector convention: (p q 1)·A·B, rows {a b u}, {c d v},
+        // {x y w}. Columns 0 and 1 are stored × 2^16, column 2 × 2^30;
+        // the middle index k of a product term picks which of the two
+        // scales cancels (k = 2 is the 2.30 column of the left factor).
+        const fn narrow(v: i128) -> i32 {
+            if v > i32::MAX as i128 {
+                i32::MAX
+            } else if v < i32::MIN as i128 {
+                i32::MIN
+            } else {
+                v as i32
+            }
+        }
+        const fn shr_round(v: i128, bits: u32) -> i128 {
+            (v + (1 << (bits - 1))) >> bits
+        }
+        let (a, b) = (self.m, next.m);
+        let mut out = [0i32; 9];
+        let mut row = 0;
+        while row < 3 {
+            let mut col = 0;
+            while col < 3 {
+                let lin = a[row * 3] as i128 * b[col] as i128
+                    + a[row * 3 + 1] as i128 * b[3 + col] as i128;
+                let proj = a[row * 3 + 2] as i128 * b[6 + col] as i128;
+                out[row * 3 + col] = narrow(shr_round(lin, 16) + shr_round(proj, 30));
+                col += 1;
+            }
+            row += 1;
+        }
+        Self { m: out }
+    }
+
     /// `true` when every value equals the identity matrix's.
     pub const fn is_identity(self) -> bool {
         let i = Self::IDENTITY.m;
@@ -839,6 +889,72 @@ impl VideoGeometry {
             None => Some(DisplayOrientation::IDENTITY),
             Some(m) => m.orientation(),
         }
+    }
+
+    /// The pixel aspect ratio that shows a `coded_width` ×
+    /// `coded_height` picture at a display aspect ratio of
+    /// `display_width : display_height` — the conversion for formats
+    /// that state a display size or a frame aspect ratio (4:3, 16:9)
+    /// instead of a sample shape. Reduced to lowest terms; `None` when
+    /// any term is zero or the reduced ratio does not fit an `i64`
+    /// fraction.
+    ///
+    /// ```
+    /// # use oxideav_core::Rational;
+    /// # use oxideav_core::geometry::VideoGeometry;
+    /// // 720×576 shown 16:9 ⇒ 64:45 pixels.
+    /// assert_eq!(
+    ///     VideoGeometry::pixel_aspect_for_display(720, 576, 16, 9),
+    ///     Some(Rational::new(64, 45)),
+    /// );
+    /// ```
+    pub fn pixel_aspect_for_display(
+        coded_width: u32,
+        coded_height: u32,
+        display_width: u32,
+        display_height: u32,
+    ) -> Option<Rational> {
+        if coded_width == 0 || coded_height == 0 || display_width == 0 || display_height == 0 {
+            return None;
+        }
+        // PAR = DAR / (W / H) = (dw · H) / (dh · W). A product of two
+        // u32 fits a u64 but not always an i64, so reduce first.
+        let num = u64::from(display_width) * u64::from(coded_height);
+        let den = u64::from(display_height) * u64::from(coded_width);
+        let (mut a, mut b) = (num, den);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        Some(Rational::new(
+            i64::try_from(num / a).ok()?,
+            i64::try_from(den / a).ok()?,
+        ))
+    }
+
+    /// The display aspect ratio (width : height, reduced) of a
+    /// `coded_width` × `coded_height` picture before any rotation: the
+    /// clean aperture's shape scaled by the pixel aspect ratio.
+    ///
+    /// `None` when a dimension is zero, the clean aperture is
+    /// malformed, or the exact ratio does not fit an `i64` fraction.
+    pub fn display_aspect(&self, coded_width: u32, coded_height: u32) -> Option<Rational> {
+        let (w, h) = match self.clean_aperture {
+            Some(clap) => {
+                if !clap.is_valid() {
+                    return None;
+                }
+                (clap.width, clap.height)
+            }
+            None => (
+                Rational::new(i64::from(coded_width), 1),
+                Rational::new(i64::from(coded_height), 1),
+            ),
+        };
+        if w.signum() <= 0 || h.signum() <= 0 {
+            return None;
+        }
+        let par = self.valid_pixel_aspect().unwrap_or(Rational::new(1, 1));
+        w.checked_mul(par)?.checked_div(h).map(Rational::reduced)
     }
 
     /// The size, in square display pixels, at which a coded picture of
@@ -1259,6 +1375,129 @@ mod tests {
         let g = VideoGeometry::new().with_display_matrix(double);
         assert_eq!(g.orientation(), None);
         assert_eq!(g.display_size(10, 10), None);
+    }
+
+    #[test]
+    fn matrix_then_agrees_with_orientation_then() {
+        for a in all_orientations() {
+            for b in all_orientations() {
+                let m = DisplayMatrix::from_orientation(a).then(DisplayMatrix::from_orientation(b));
+                assert_eq!(m.orientation(), Some(a.then(b)), "{a:?} then {b:?}");
+                assert_eq!(m, DisplayMatrix::from_orientation(a.then(b)));
+            }
+            let m = DisplayMatrix::from_orientation_in(a, 640, 360);
+            assert_eq!(m.then(DisplayMatrix::IDENTITY), m);
+            assert_eq!(DisplayMatrix::IDENTITY.then(m), m);
+        }
+    }
+
+    #[test]
+    fn matrix_then_composes_points_in_order() {
+        // Track: quarter turn of a 640×360 picture; movie: doubled and
+        // moved by (20, 30).
+        let track = DisplayMatrix::from_orientation_in(DisplayOrientation::rotated_cw(1), 640, 360);
+        let movie = DisplayMatrix::from_fixed([
+            0x2_0000,
+            0,
+            0,
+            0,
+            0x2_0000,
+            0,
+            20 << 16,
+            30 << 16,
+            0x4000_0000,
+        ]);
+        let both = track.then(movie);
+        for (p, q) in [(0.0, 0.0), (640.0, 0.0), (0.0, 360.0), (123.0, 45.5)] {
+            let (tp, tq) = track.apply(p, q);
+            assert_eq!(both.apply(p, q), movie.apply(tp, tq), "({p}, {q})");
+        }
+        assert_eq!(both.orientation(), None); // scaled
+        // Fractional terms round to nearest instead of truncating:
+        // 0.5 × 0.5 = 0.25, and 1/65536 × 0.5 rounds half up to one unit.
+        let half = DisplayMatrix::from_fixed([0x8000, 0, 0, 0, 0x8000, 0, 0, 0, 0x4000_0000]);
+        assert_eq!(half.then(half).linear(), [0.25, 0.0, 0.0, 0.25]);
+        let tiny = DisplayMatrix::from_fixed([1, 0, 0, 0, 1, 0, 0, 0, 0x4000_0000]);
+        assert_eq!(tiny.then(half).to_fixed()[0], 1);
+        // Out-of-range products saturate.
+        let big = DisplayMatrix::from_fixed([i32::MAX, 0, 0, 0, i32::MAX, 0, 0, 0, 0x4000_0000]);
+        assert_eq!(big.then(big).to_fixed()[0], i32::MAX);
+    }
+
+    #[test]
+    fn matrix_then_handles_the_projective_column() {
+        // w = 0.5 halves the homogeneous divisor, doubling the output.
+        let mut v = DisplayMatrix::IDENTITY.to_fixed();
+        v[8] = 0x2000_0000;
+        let w_half = DisplayMatrix::from_fixed(v);
+        assert_eq!(w_half.apply(3.0, 4.0), (6.0, 8.0));
+        let twice = w_half.then(w_half);
+        assert_eq!(twice.to_fixed()[8], 0x1000_0000);
+        assert_eq!(twice.apply(3.0, 4.0), (12.0, 16.0));
+        assert!(!twice.is_affine());
+    }
+
+    #[test]
+    fn display_aspect_and_its_inverse() {
+        // 720×576 at 64:45 is 16:9.
+        let g = VideoGeometry::new().with_pixel_aspect(Rational::new(64, 45));
+        assert_eq!(g.display_aspect(720, 576), Some(Rational::new(16, 9)));
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(720, 576, 16, 9),
+            Some(Rational::new(64, 45))
+        );
+        // A display size instead of a ratio: 1024×576 for 720×576.
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(720, 576, 1024, 576),
+            Some(Rational::new(64, 45))
+        );
+        // Square pixels: the coded shape, reduced.
+        assert_eq!(
+            VideoGeometry::new().display_aspect(1920, 1080),
+            Some(Rational::new(16, 9))
+        );
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(1920, 1080, 16, 9),
+            Some(Rational::new(1, 1))
+        );
+        // The clean aperture replaces the coded size.
+        let g = VideoGeometry::new()
+            .with_clean_aperture(CleanAperture::centered(704, 480))
+            .with_pixel_aspect(Rational::new(10, 11));
+        assert_eq!(g.display_aspect(720, 486), Some(Rational::new(4, 3)));
+        // Degenerate inputs.
+        assert_eq!(VideoGeometry::pixel_aspect_for_display(0, 576, 16, 9), None);
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(720, 576, 16, 0),
+            None
+        );
+        assert_eq!(VideoGeometry::new().display_aspect(0, 10), None);
+        assert_eq!(VideoGeometry::new().display_aspect(10, 0), None);
+        let bad = CleanAperture::new(
+            Rational::new(1, 0),
+            Rational::new(1, 1),
+            Rational::new(0, 1),
+            Rational::new(0, 1),
+        );
+        assert_eq!(
+            VideoGeometry::new()
+                .with_clean_aperture(bad)
+                .display_aspect(10, 10),
+            None
+        );
+        // Extreme terms neither overflow nor wrap.
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(u32::MAX, u32::MAX, u32::MAX, u32::MAX),
+            Some(Rational::new(1, 1))
+        );
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(u32::MAX, 1, 1, u32::MAX),
+            None
+        );
+        assert_eq!(
+            VideoGeometry::pixel_aspect_for_display(1, u32::MAX, 1, 3),
+            Some(Rational::new(i64::from(u32::MAX / 3), 1))
+        );
     }
 
     #[test]

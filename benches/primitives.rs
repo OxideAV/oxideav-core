@@ -264,5 +264,46 @@ fn bench_rational(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_bits, bench_rescale, bench_rational);
+/// Stream-parameter bookkeeping: what a pipeline pays per stream (clone)
+/// and per output-shape change (merge) — not per frame.
+fn bench_stream_params(c: &mut Criterion) {
+    use oxideav_core::{CodecId, CodecParameters, PixelFormat};
+
+    let mut container = CodecParameters::video(CodecId::new("h264"));
+    container.width = Some(1920);
+    container.height = Some(1088);
+    container.bit_rate = Some(8_000_000);
+    container.extradata = vec![0u8; 48];
+    let mut decoded = CodecParameters::video(CodecId::new("h264"));
+    decoded.width = Some(1920);
+    decoded.height = Some(1080);
+    decoded.pixel_format = Some(PixelFormat::Yuv420P);
+
+    let mut g = c.benchmark_group("stream_params");
+    g.bench_function("clone", |b| b.iter(|| black_box(&container).clone()));
+    g.bench_function("merge_output_params/changed", |b| {
+        b.iter_batched(
+            || container.clone(),
+            |mut stream| {
+                black_box(stream.merge_output_params(black_box(&decoded)));
+                stream
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    let mut settled = container.clone();
+    settled.merge_output_params(&decoded);
+    g.bench_function("merge_output_params/unchanged", |b| {
+        b.iter(|| black_box(settled.merge_output_params(black_box(&decoded))))
+    });
+    g.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_bits,
+    bench_rescale,
+    bench_rational,
+    bench_stream_params
+);
 criterion_main!(benches);

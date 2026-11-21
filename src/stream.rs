@@ -811,15 +811,21 @@ impl CodecParameters {
             self.layers = decoded.layers.clone();
             changed = true;
         }
-        let geometry = decoded.geometry.or(self.geometry);
-        if geometry != self.geometry {
-            self.geometry = geometry;
-            changed = true;
+        // Most decoders state neither record: skip the field-wise merge
+        // (and its copies) unless there is something to fold in.
+        if !decoded.geometry.is_unspecified() {
+            let geometry = decoded.geometry.or(self.geometry);
+            if geometry != self.geometry {
+                self.geometry = geometry;
+                changed = true;
+            }
         }
-        let gapless = decoded.gapless.or(self.gapless);
-        if gapless != self.gapless {
-            self.gapless = gapless;
-            changed = true;
+        if !decoded.gapless.is_unspecified() {
+            let gapless = decoded.gapless.or(self.gapless);
+            if gapless != self.gapless {
+                self.gapless = gapless;
+                changed = true;
+            }
         }
         changed
     }
