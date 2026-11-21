@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-core/compare/v0.1.43...v0.2.0) - 2026-11-21
+
+### Other
+
+- state the arithmetic composite formula as the specification gives it
+- :primitive_subregions; GaplessInfo::keep_range / rescaled
+- DisplayMatrix::then, display-aspect conversions; merge fast path + stream_params bench
+- Vector scene: filter-effect nodes, shapes with markers / non-scaling stroke / paint order
+- :ConicGradient: conic (sweep) gradient paint
+- Video stream geometry + gapless trim record on CodecParameters
+- SharedBytes + SharedPacket: cheaply clonable shared-buffer packet payloads
+- ChannelPosition wide / top-side / top-centre / bottom / LFE2 + immersive ChannelLayout names (5.1.2 … 9.1.6)
+
 ### Added
 
 - `FilterEffect::primitive_subregions(bounds)` — the concrete
