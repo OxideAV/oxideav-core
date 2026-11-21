@@ -124,6 +124,86 @@ impl GaplessInfo {
         start..end.max(start)
     }
 
+    /// The part of one decoded frame to keep, for trimming a stream as
+    /// it plays.
+    ///
+    /// `frame_start` is the index of the frame's first sample in the
+    /// decoded stream (counting from the first decoded sample, priming
+    /// included) and `frame_len` its length in samples. The result is
+    /// a range of sample offsets **within the frame**; it is `0..0` when
+    /// the whole frame is to be dropped.
+    ///
+    /// The trailing trim needs the end of the source signal:
+    /// `decoded_total`, when the caller knows how many samples the
+    /// whole stream decodes to, resolves it through
+    /// [`valid_range`](Self::valid_range); without it the end is
+    /// `priming + valid_samples` when the length is stated, and
+    /// otherwise unknown — nothing is trimmed at the end.
+    ///
+    /// ```
+    /// # use oxideav_core::gapless::GaplessInfo;
+    /// let g = GaplessInfo::new().with_priming(2112).with_valid_samples(5389);
+    /// assert_eq!(g.keep_range(0, 1024, None), 0..0); // all priming
+    /// assert_eq!(g.keep_range(2048, 1024, None), 64..1024); // straddles the start
+    /// assert_eq!(g.keep_range(7168, 1024, None), 0..333); // straddles the end
+    /// ```
+    pub fn keep_range(
+        &self,
+        frame_start: u64,
+        frame_len: u32,
+        decoded_total: Option<u64>,
+    ) -> Range<u32> {
+        // Widened so that neither a frame ending past `u64::MAX` nor the
+        // "end unknown" sentinel can collide with a real position.
+        let (valid_start, valid_end) = match decoded_total {
+            Some(total) => {
+                let r = self.valid_range(total);
+                (u128::from(r.start), u128::from(r.end))
+            }
+            None => {
+                let start = u128::from(self.priming.unwrap_or(0));
+                let end = match self.valid_samples {
+                    Some(valid) => start + u128::from(valid),
+                    None => u128::MAX,
+                };
+                (start, end)
+            }
+        };
+        let frame_start = u128::from(frame_start);
+        let frame_end = frame_start + u128::from(frame_len);
+        let from = valid_start.clamp(frame_start, frame_end);
+        let to = valid_end.clamp(from, frame_end);
+        if from == to {
+            return 0..0;
+        }
+        // Both differences are at most `frame_len`.
+        (from - frame_start) as u32..(to - frame_start) as u32
+    }
+
+    /// The same record for a stream resampled from `from_rate` to
+    /// `to_rate` Hz: every count is rescaled, rounding to nearest. A
+    /// zero rate leaves the record unchanged.
+    ///
+    /// For stages that change the sample rate (a resampler, a decoder
+    /// that outputs at a multiple of the coded rate), so the counts
+    /// keep describing the stream they travel with.
+    pub fn rescaled(self, from_rate: u32, to_rate: u32) -> Self {
+        if from_rate == 0 || to_rate == 0 || from_rate == to_rate {
+            return self;
+        }
+        let scale = |v: u64| -> u64 {
+            let wide = (u128::from(v) * u128::from(to_rate) + u128::from(from_rate) / 2)
+                / u128::from(from_rate);
+            u64::try_from(wide).unwrap_or(u64::MAX)
+        };
+        let narrow = |v: u32| u32::try_from(scale(u64::from(v))).unwrap_or(u32::MAX);
+        Self {
+            priming: self.priming.map(narrow),
+            padding: self.padding.map(narrow),
+            valid_samples: self.valid_samples.map(scale),
+        }
+    }
+
     /// Number of source-signal samples among `decoded_samples` decoded
     /// ones: the length of [`valid_range`](Self::valid_range).
     pub fn resolved_valid_samples(&self, decoded_samples: u64) -> u64 {
@@ -210,6 +290,94 @@ mod tests {
         let g = GaplessInfo::new().with_padding(u32::MAX);
         assert_eq!(g.valid_range(7), 0..0);
         assert_eq!(g.resolved_padding(7), 7);
+    }
+
+    #[test]
+    fn keep_range_walks_the_worked_example_frame_by_frame() {
+        // 8 frames of 1024; valid samples are 2112..7501.
+        let infos = [
+            (
+                GaplessInfo::new().with_priming(2112).with_padding(691),
+                Some(8192),
+            ),
+            (
+                GaplessInfo::new()
+                    .with_priming(2112)
+                    .with_valid_samples(5389),
+                None,
+            ),
+            (
+                GaplessInfo::new()
+                    .with_priming(2112)
+                    .with_valid_samples(5389),
+                Some(8192),
+            ),
+        ];
+        for (g, total) in infos {
+            let mut kept = 0u64;
+            let mut ranges = Vec::new();
+            for frame in 0..8u64 {
+                let r = g.keep_range(frame * 1024, 1024, total);
+                kept += u64::from(r.end - r.start);
+                ranges.push(r);
+            }
+            assert_eq!(kept, 5389);
+            assert_eq!(ranges[0], 0..0);
+            assert_eq!(ranges[1], 0..0);
+            assert_eq!(ranges[2], 64..1024);
+            assert_eq!(ranges[3], 0..1024);
+            assert_eq!(ranges[6], 0..1024);
+            assert_eq!(ranges[7], 0..333);
+        }
+    }
+
+    #[test]
+    fn keep_range_without_an_end_trims_only_the_start() {
+        // Padding alone cannot be applied without the decoded total.
+        let g = GaplessInfo::new().with_priming(100).with_padding(50);
+        assert_eq!(g.keep_range(0, 64, None), 0..0);
+        assert_eq!(g.keep_range(64, 64, None), 36..64);
+        assert_eq!(g.keep_range(10_000, 64, None), 0..64);
+        // With the total it is.
+        assert_eq!(g.keep_range(960, 64, Some(1024)), 0..14);
+        // Unspecified keeps everything; empty frames stay empty.
+        let none = GaplessInfo::new();
+        assert_eq!(none.keep_range(0, 64, None), 0..64);
+        assert_eq!(none.keep_range(5, 0, Some(100)), 0..0);
+        // Frames past the end of the stream, and positions near
+        // u64::MAX, neither panic nor keep anything out of range.
+        assert_eq!(g.keep_range(2000, 64, Some(1024)), 0..0);
+        assert_eq!(none.keep_range(u64::MAX - 3, 64, None), 0..64);
+        assert_eq!(none.keep_range(u64::MAX - 3, 64, Some(u64::MAX)), 0..3);
+    }
+
+    #[test]
+    fn rescaled_follows_the_sample_rate() {
+        let g = GaplessInfo::new()
+            .with_priming(312)
+            .with_padding(100)
+            .with_valid_samples(48_000);
+        let half = g.rescaled(48_000, 24_000);
+        assert_eq!(half.priming, Some(156));
+        assert_eq!(half.padding, Some(50));
+        assert_eq!(half.valid_samples, Some(24_000));
+        // 2112 samples at 44.1 kHz are 2298.78 at 48 kHz: rounds up.
+        let up = GaplessInfo::new()
+            .with_priming(2112)
+            .rescaled(44_100, 48_000);
+        assert_eq!(up.priming, Some(2299));
+        assert_eq!(up.padding, None);
+        // Identity and degenerate rates.
+        assert_eq!(g.rescaled(48_000, 48_000), g);
+        assert_eq!(g.rescaled(0, 48_000), g);
+        assert_eq!(g.rescaled(48_000, 0), g);
+        // Saturation instead of wrap.
+        let big = GaplessInfo::new()
+            .with_priming(u32::MAX)
+            .with_valid_samples(u64::MAX)
+            .rescaled(1, u32::MAX);
+        assert_eq!(big.priming, Some(u32::MAX));
+        assert_eq!(big.valid_samples, Some(u64::MAX));
     }
 
     #[test]

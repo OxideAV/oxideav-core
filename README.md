@@ -299,7 +299,10 @@ output of whoever fills them in — a decoder that trims by itself
 reports `0`, and the field-wise merge (`GaplessInfo::or`) then tells
 downstream stages nothing is left to trim.
 `GaplessInfo::valid_range(decoded_samples)` resolves the three into a
-clamped index range. Builders: `with_gapless`, `with_priming_samples`,
+clamped index range. `keep_range(frame_start, frame_len, total)` answers
+the same per decoded frame for a player trimming as it goes, and
+`rescaled(from_rate, to_rate)` keeps the counts true across a
+resampler. Builders: `with_gapless`, `with_priming_samples`,
 `with_padding_samples`.
 
 Cost of the two records, `cargo bench --bench primitives --
@@ -339,8 +342,8 @@ skips the rest through its wildcard arm.
   stroke paint, `Previous`, or `Result(index)` of an earlier
   primitive), a subregion and a colour-interpolation space.
   `FilterEffect::validate()` rejects malformed graphs;
-  `resolve_input` / `reads` / `region_in` are the rasteriser-side
-  helpers. Effects are shared behind `Arc`.
+  `resolve_input` / `reads` / `region_in` / `primitive_subregions`
+  are the rasteriser-side helpers. Effects are shared behind `Arc`.
 * **Markers** — a `Marker` is a drawing with a view box, a reference
   point, a viewport in stroke-width or user units and an orientation
   rule; `Marker::placement(position, vertex, direction, stroke_width)`

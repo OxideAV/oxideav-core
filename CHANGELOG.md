@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `FilterEffect::primitive_subregions(bounds)` — the concrete
+  subregion of every primitive per Filter Effects §9.4 (filter region,
+  or the union of the referenced primitives' subregions, with explicit
+  components applied in the effect's primitive units).
+- `GaplessInfo::keep_range(frame_start, frame_len, decoded_total)` —
+  the part of one decoded frame to keep while trimming a playing
+  stream — and `GaplessInfo::rescaled(from_rate, to_rate)` for stages
+  that change the sample rate.
 - `DisplayMatrix::then` (track matrix ∘ movie matrix, exact in the
   stored fixed-point formats, rounding to nearest, saturating),
   `VideoGeometry::pixel_aspect_for_display` and

@@ -921,6 +921,68 @@ impl FilterEffect {
         }
     }
 
+    /// The subregion of every primitive as a concrete rectangle in
+    /// user space, in primitive order, given the bounding box of the
+    /// filtered content.
+    ///
+    /// Each primitive starts from its default subregion (Filter
+    /// Effects §9.4): the filter region when it has no input, when one
+    /// of its inputs is a standard input, or when it is a tile;
+    /// otherwise the union of the subregions of the primitives it
+    /// reads. Components given explicitly in
+    /// [`FilterPrimitive::subregion`] then replace the defaults; with
+    /// [`FilterUnits::ObjectBoundingBox`] primitive units they are
+    /// fractions of `bounds`.
+    ///
+    /// The rectangles are not intersected with the filter region; a
+    /// rasteriser sizes each intermediate image to that intersection.
+    /// References that [`validate`](Self::validate) would reject are
+    /// ignored.
+    pub fn primitive_subregions(&self, bounds: Rect) -> Vec<Rect> {
+        fn union(a: Rect, b: Rect) -> Rect {
+            let x = a.x.min(b.x);
+            let y = a.y.min(b.y);
+            Rect {
+                x,
+                y,
+                width: (a.x + a.width).max(b.x + b.width) - x,
+                height: (a.y + a.height).max(b.y + b.height) - y,
+            }
+        }
+        let region = self.region_in(bounds);
+        let mut out: Vec<Rect> = Vec::with_capacity(self.primitives.len());
+        for (index, primitive) in self.primitives.iter().enumerate() {
+            let mut referenced: Option<Rect> = None;
+            let mut whole_region =
+                primitive.inputs.is_empty() || matches!(primitive.kind, FilterPrimitiveKind::Tile);
+            for slot in 0..primitive.inputs.len() {
+                match self.resolve_input(index, slot) {
+                    Some(FilterInput::Result(r)) if r < index => {
+                        referenced = Some(referenced.map_or(out[r], |u| union(u, out[r])));
+                    }
+                    Some(FilterInput::Result(_)) | None => {}
+                    Some(_) => whole_region = true,
+                }
+            }
+            let default = match referenced {
+                Some(r) if !whole_region => r,
+                _ => region,
+            };
+            let sub = primitive.subregion;
+            let rect = match self.primitive_units {
+                FilterUnits::UserSpaceOnUse => sub.resolve(default),
+                FilterUnits::ObjectBoundingBox => Rect {
+                    x: sub.x.map_or(default.x, |v| bounds.x + v * bounds.width),
+                    y: sub.y.map_or(default.y, |v| bounds.y + v * bounds.height),
+                    width: sub.width.map_or(default.width, |v| v * bounds.width),
+                    height: sub.height.map_or(default.height, |v| v * bounds.height),
+                },
+            };
+            out.push(rect);
+        }
+        out
+    }
+
     /// Input `slot` of primitive `primitive` with the implicit
     /// [`FilterInput::Previous`] replaced by what it stands for:
     /// [`FilterInput::SourceGraphic`] for the first primitive,
@@ -1360,6 +1422,94 @@ mod tests {
             .with_primitive_units(FilterUnits::ObjectBoundingBox);
         assert_eq!(user.region_in(bounds), Rect::new(1.0, 2.0, 3.0, 4.0));
         assert_eq!(user.primitive_units, FilterUnits::ObjectBoundingBox);
+    }
+
+    #[test]
+    fn default_subregions_follow_the_union_rule() {
+        let bounds = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let region = Rect::new(-10.0, -10.0, 120.0, 120.0);
+        let flood = |x: f32| {
+            FilterPrimitive::new(FilterPrimitiveKind::flood(Rgba::default()))
+                .with_subregion(FilterSubregion::from_rect(Rect::new(x, 0.0, 10.0, 10.0)))
+        };
+        let e = FilterEffect::new()
+            .with_region(region, FilterUnits::UserSpaceOnUse)
+            // 0: no input, explicit subregion.
+            .with_primitive(flood(0.0))
+            // 1: no input, explicit subregion further right.
+            .with_primitive(flood(50.0))
+            // 2: reads 1 implicitly: default = subregion of 1.
+            .with_primitive(FilterPrimitive::new(FilterPrimitiveKind::offset(1.0, 1.0)))
+            // 3: reads 0 and 2: default = their union.
+            .with_primitive(
+                FilterPrimitive::new(FilterPrimitiveKind::Merge)
+                    .with_inputs([FilterInput::Result(0), FilterInput::Result(2)]),
+            )
+            // 4: one standard input: the whole filter region.
+            .with_primitive(
+                FilterPrimitive::new(FilterPrimitiveKind::Composite(CompositeOperator::In))
+                    .with_inputs([FilterInput::Result(3), FilterInput::SourceAlpha]),
+            )
+            // 5: a tile always defaults to the filter region.
+            .with_primitive(
+                FilterPrimitive::new(FilterPrimitiveKind::Tile)
+                    .with_input(0, FilterInput::Result(0)),
+            )
+            // 6: partial override of a union default.
+            .with_primitive(
+                FilterPrimitive::new(FilterPrimitiveKind::gaussian_blur(1.0))
+                    .with_input(0, FilterInput::Result(3))
+                    .with_subregion(FilterSubregion::new().with_y(-5.0).with_height(30.0)),
+            )
+            // 7: no input and no subregion: the filter region.
+            .with_primitive(FilterPrimitive::new(FilterPrimitiveKind::turbulence(
+                TurbulenceKind::Turbulence,
+                0.1,
+            )));
+        assert!(e.validate().is_ok());
+        let r = e.primitive_subregions(bounds);
+        assert_eq!(r.len(), 8);
+        assert_eq!(r[0], Rect::new(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(r[1], Rect::new(50.0, 0.0, 10.0, 10.0));
+        assert_eq!(r[2], r[1]);
+        assert_eq!(r[3], Rect::new(0.0, 0.0, 60.0, 10.0));
+        assert_eq!(r[4], region);
+        assert_eq!(r[5], region);
+        assert_eq!(r[6], Rect::new(0.0, -5.0, 60.0, 30.0));
+        assert_eq!(r[7], region);
+        // The first primitive's implicit input is the source graphic.
+        let first = FilterEffect::new()
+            .with_region(region, FilterUnits::UserSpaceOnUse)
+            .with_primitive(blur(1.0));
+        assert_eq!(first.primitive_subregions(bounds), [region]);
+        assert!(FilterEffect::new().primitive_subregions(bounds).is_empty());
+    }
+
+    #[test]
+    fn bounding_box_primitive_units_scale_explicit_subregions() {
+        let bounds = Rect::new(200.0, 100.0, 50.0, 20.0);
+        let e = FilterEffect::new()
+            .with_primitive_units(FilterUnits::ObjectBoundingBox)
+            .with_primitive(
+                FilterPrimitive::new(FilterPrimitiveKind::flood(Rgba::default()))
+                    .with_subregion(FilterSubregion::from_rect(Rect::new(0.5, 0.25, 0.5, 0.5))),
+            )
+            .with_primitive(
+                FilterPrimitive::new(FilterPrimitiveKind::offset(0.0, 0.0))
+                    .with_subregion(FilterSubregion::new().with_width(1.0)),
+            );
+        let r = e.primitive_subregions(bounds);
+        assert_eq!(r[0], Rect::new(225.0, 105.0, 25.0, 10.0));
+        // Default from primitive 0, width overridden to the full box.
+        assert_eq!(r[1], Rect::new(225.0, 105.0, 50.0, 10.0));
+        // Malformed references are ignored rather than indexed.
+        let bad = FilterEffect::new()
+            .with_region(Rect::new(0.0, 0.0, 1.0, 1.0), FilterUnits::UserSpaceOnUse)
+            .with_primitive(blur(1.0).with_input(0, FilterInput::Result(7)));
+        assert_eq!(
+            bad.primitive_subregions(bounds),
+            [Rect::new(0.0, 0.0, 1.0, 1.0)]
+        );
     }
 
     #[test]
