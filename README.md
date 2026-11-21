@@ -46,6 +46,10 @@ pure-Rust media framework:
   what a decoder / encoder consumes, including the stream's
   `color_signal`, its `layers` description and its metadata `blobs`
   (ICC / Exif / XMP / IPTC / cover art / custom).
+  Video streams also carry their display `geometry` (pixel aspect
+  ratio, clean aperture, field order, rotation / mirroring — see
+  [Video geometry](#video-geometry)) and audio streams their `gapless`
+  trim counts ([Gapless audio](#gapless-audio)).
   A stream's `pixel_format` is the container's claim; a decoder that
   knows what it will emit (configuration record, negotiated hardware
   session, fixed output policy) states the fact with
@@ -255,6 +259,43 @@ Both features are strictly additive: no existing field, signature or
 variant changed, `VideoFrame` remains constructible by struct literal,
 and `CodecParameters` gained its two fields behind its existing
 `#[non_exhaustive]` marker.
+
+## Video geometry
+
+How a stream's sample grid reaches a screen is stream metadata, not
+pixel data. Module `geometry` types the four facts and
+`CodecParameters::geometry: VideoGeometry` carries them; every part is
+optional and defaults to "unspecified".
+
+| part | type | meaning |
+|---|---|---|
+| `pixel_aspect` | `Option<Rational>` | sample width / height (`hSpacing / vSpacing` of ISO/IEC 14496-12 §12.1.4); `None` ⇒ assume square |
+| `clean_aperture` | `Option<CleanAperture>` | displayed sub-rectangle as exact width / height fractions plus the centre offset from the picture centre (the `clap` box); `CleanAperture::from_crop` / `rect_in(w, h)` convert to and from a left / top / width / height rectangle with sub-pixel precision |
+| `field_order` | `FieldOrder` | `Unspecified`, `Progressive`, `TopFirst`, `BottomFirst`, the two displayed-vs-stored cross orders, `Interlaced` (order unknown); `from_field_atom` / `to_field_atom` map the QuickTime `fiel` byte pair |
+| `display_matrix` | `Option<DisplayMatrix>` | the 3×3 frame → surface matrix of §6.2.2 in its stored fixed-point form (`from_fixed` / `to_fixed` round-trip exactly); `orientation()` reduces it to a `DisplayOrientation` — horizontal mirror, then 0 / 90 / 180 / 270° clockwise — when it is one of those eight, and `DisplayMatrix::from_orientation[_in]` builds them |
+
+`CodecParameters` builders: `with_geometry`, `with_pixel_aspect`,
+`with_clean_aperture`, `with_field_order`, `with_display_matrix`
+(accepts a matrix or an orientation). `CodecParameters::display_size()`
+answers the size in square pixels after aperture, aspect ratio and
+orientation. `merge_output_params` folds a decoder's answer in
+field-wise (`VideoGeometry::or`), so a mid-stream change rides the
+existing `Frame::StreamParams` event; the framework itself never
+crops, scales or rotates samples.
+
+## Gapless audio
+
+`CodecParameters::gapless: GaplessInfo` states how many decoded samples
+to drop at each end so exactly the source signal remains: `priming`
+(encoder delay / pre-skip), `padding` (remainder of the last packet)
+and, for formats that state a length instead, `valid_samples`. Counts
+are samples per channel at the stream's `sample_rate` and describe the
+output of whoever fills them in — a decoder that trims by itself
+reports `0`, and the field-wise merge (`GaplessInfo::or`) then tells
+downstream stages nothing is left to trim.
+`GaplessInfo::valid_range(decoded_samples)` resolves the three into a
+clamped index range. Builders: `with_gapless`, `with_priming_samples`,
+`with_padding_samples`.
 
 ## Container metadata
 

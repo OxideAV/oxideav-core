@@ -43,6 +43,8 @@ pub mod execution;
 pub mod filter;
 pub mod format;
 pub mod frame;
+pub mod gapless;
+pub mod geometry;
 pub mod layer;
 pub mod limits;
 pub mod metadata;
@@ -67,6 +69,11 @@ pub use format::{
     ChannelLayout, ChannelPosition, MediaType, ParseChannelLayoutError, PixelFormat, SampleFormat,
 };
 pub use frame::{AudioFrame, Frame, VideoFrame, VideoPlane};
+pub use gapless::GaplessInfo;
+pub use geometry::{
+    ApertureRect, CleanAperture, DisplayMatrix, DisplayOrientation, Field, FieldOrder,
+    VideoGeometry,
+};
 pub use layer::{LayerIdentity, LayerInfo};
 pub use limits::DecoderLimits;
 pub use metadata::{Attachment, Chapter};

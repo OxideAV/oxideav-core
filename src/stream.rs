@@ -2,6 +2,8 @@
 
 use crate::blob::{BlobKind, MetadataBlob};
 use crate::format::{ChannelLayout, MediaType, PixelFormat, SampleFormat};
+use crate::gapless::GaplessInfo;
+use crate::geometry::{CleanAperture, DisplayMatrix, FieldOrder, VideoGeometry};
 use crate::layer::LayerInfo;
 use crate::limits::DecoderLimits;
 use crate::options::CodecOptions;
@@ -495,6 +497,49 @@ pub struct CodecParameters {
     /// Not compared by [`matches_core`](Self::matches_core): like
     /// `extradata`, descriptive metadata a lossless copy may rewrite.
     pub blobs: Vec<MetadataBlob>,
+
+    /// Video: how the sample grid maps to a display — pixel aspect
+    /// ratio, clean aperture, field order and display matrix (rotation
+    /// / mirroring). See [`crate::geometry`] for the semantics of each
+    /// part. Defaults to [`VideoGeometry::unspecified`] (every part
+    /// open).
+    ///
+    /// Set by the **producer**: a demuxer from the container's records
+    /// (ISO base media `pasp` / `clap` sample-entry boxes and the track
+    /// header matrix, a QuickTime `fiel` extension, a Matroska video
+    /// track's display / crop / field elements, …), a decoder from the
+    /// bitstream's own signalling, an encoder in `output_params()` to
+    /// tell the muxer what to write. The clean aperture is relative to
+    /// the [`width`](Self::width) × [`height`](Self::height) stated in
+    /// these same parameters: a decoder that already delivers cropped
+    /// frames reports the cropped size and no aperture.
+    ///
+    /// The framework never applies any of it to the samples; frames
+    /// stay exactly as decoded. Renderers, converters and muxers read
+    /// it through [`display_size`](Self::display_size) and the fields
+    /// directly.
+    ///
+    /// Not compared by [`matches_core`](Self::matches_core): like
+    /// `color_signal`, descriptive metadata a lossless copy may
+    /// rewrite.
+    pub geometry: VideoGeometry,
+
+    /// Audio: leading (priming / encoder delay / pre-skip) and trailing
+    /// (remainder / padding) sample counts to discard from the decoded
+    /// stream for gapless playback. See [`crate::gapless`]. Defaults to
+    /// every part unspecified.
+    ///
+    /// Counts are samples per channel at
+    /// [`sample_rate`](Self::sample_rate) and describe the output of
+    /// whoever fills them in: a demuxer reports what the container
+    /// says the decoded stream carries (an edit list, a gapless tag, a
+    /// codec header's pre-skip), and a decoder that trims by itself
+    /// reports `0` in [`Decoder::output_params`](crate::Decoder::output_params)
+    /// so the merged record tells downstream stages nothing is left to
+    /// trim.
+    ///
+    /// Not compared by [`matches_core`](Self::matches_core).
+    pub gapless: GaplessInfo,
 }
 
 impl CodecParameters {
@@ -524,6 +569,8 @@ impl CodecParameters {
             color_signal: ColorSignal::unspecified(),
             layers: Vec::new(),
             blobs: Vec::new(),
+            geometry: VideoGeometry::new(),
+            gapless: GaplessInfo::new(),
         }
     }
 
@@ -570,6 +617,8 @@ impl CodecParameters {
             color_signal: ColorSignal::unspecified(),
             layers: Vec::new(),
             blobs: Vec::new(),
+            geometry: VideoGeometry::new(),
+            gapless: GaplessInfo::new(),
         }
     }
 
@@ -599,6 +648,8 @@ impl CodecParameters {
             color_signal: ColorSignal::unspecified(),
             layers: Vec::new(),
             blobs: Vec::new(),
+            geometry: VideoGeometry::new(),
+            gapless: GaplessInfo::new(),
         }
     }
 
@@ -627,6 +678,8 @@ impl CodecParameters {
             color_signal: ColorSignal::unspecified(),
             layers: Vec::new(),
             blobs: Vec::new(),
+            geometry: VideoGeometry::new(),
+            gapless: GaplessInfo::new(),
         }
     }
 
@@ -687,6 +740,8 @@ impl CodecParameters {
     /// | `sample_rate`, `channels`, `sample_format`, `channel_layout` | decoder's `Some` replaces; a kept layout / count that disagrees with the decoder's count is dropped / re-derived so the pair stays consistent |
     /// | `color_signal` | field-wise: the decoder's specified parts over the container's ([`ColorSignal::or`]) |
     /// | `layers` | the decoder's list replaces when non-empty |
+    /// | `geometry` | field-wise: the decoder's specified parts over the container's ([`VideoGeometry::or`]) |
+    /// | `gapless` | field-wise: the decoder's specified parts over the container's ([`GaplessInfo::or`]) |
     /// | `codec_id`, `media_type`, `extradata`, `bit_rate`, `tag`, `language`, `blobs`, `options`, `limits`, `device_index` | kept |
     ///
     /// Returns `true` when any field of `self` changed — the signal a
@@ -754,6 +809,16 @@ impl CodecParameters {
         }
         if !decoded.layers.is_empty() && decoded.layers != self.layers {
             self.layers = decoded.layers.clone();
+            changed = true;
+        }
+        let geometry = decoded.geometry.or(self.geometry);
+        if geometry != self.geometry {
+            self.geometry = geometry;
+            changed = true;
+        }
+        let gapless = decoded.gapless.or(self.gapless);
+        if gapless != self.gapless {
+            self.gapless = gapless;
             changed = true;
         }
         changed
@@ -902,6 +967,93 @@ impl CodecParameters {
     /// described) report `false`.
     pub fn is_multi_layer(&self) -> bool {
         self.layers.len() > 1
+    }
+
+    /// Builder method: replace the stream's
+    /// [`geometry`](Self::geometry).
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters, Rational};
+    /// # use oxideav_core::geometry::{DisplayOrientation, FieldOrder, VideoGeometry};
+    /// let mut p = CodecParameters::video(CodecId::new("h264")).with_geometry(
+    ///     VideoGeometry::new()
+    ///         .with_pixel_aspect(Rational::new(4, 3))
+    ///         .with_orientation(DisplayOrientation::rotated_cw(1)),
+    /// );
+    /// p.width = Some(1440);
+    /// p.height = Some(1080);
+    /// assert_eq!(p.display_size(), Some((1080, 1920)));
+    /// ```
+    pub fn with_geometry(mut self, geometry: VideoGeometry) -> Self {
+        self.geometry = geometry;
+        self
+    }
+
+    /// Builder method: set only the pixel aspect ratio (sample width /
+    /// height) of the stream's [`geometry`](Self::geometry).
+    pub fn with_pixel_aspect(mut self, ratio: Rational) -> Self {
+        self.geometry.pixel_aspect = Some(ratio);
+        self
+    }
+
+    /// Builder method: set only the clean aperture of the stream's
+    /// [`geometry`](Self::geometry).
+    pub fn with_clean_aperture(mut self, aperture: CleanAperture) -> Self {
+        self.geometry.clean_aperture = Some(aperture);
+        self
+    }
+
+    /// Builder method: set only the field order of the stream's
+    /// [`geometry`](Self::geometry).
+    pub fn with_field_order(mut self, order: FieldOrder) -> Self {
+        self.geometry.field_order = order;
+        self
+    }
+
+    /// Builder method: set only the display matrix of the stream's
+    /// [`geometry`](Self::geometry). Accepts a [`DisplayMatrix`] or a
+    /// [`DisplayOrientation`](crate::geometry::DisplayOrientation).
+    pub fn with_display_matrix(mut self, matrix: impl Into<DisplayMatrix>) -> Self {
+        self.geometry.display_matrix = Some(matrix.into());
+        self
+    }
+
+    /// The size in square display pixels at which the stream is shown:
+    /// [`VideoGeometry::display_size`] of [`width`](Self::width) ×
+    /// [`height`](Self::height). `None` when either dimension is
+    /// unset or the geometry cannot be resolved (malformed aperture,
+    /// a display matrix that is not a quarter-turn orientation).
+    pub fn display_size(&self) -> Option<(u32, u32)> {
+        self.geometry.display_size(self.width?, self.height?)
+    }
+
+    /// Builder method: replace the stream's [`gapless`](Self::gapless)
+    /// trim record.
+    ///
+    /// ```
+    /// # use oxideav_core::{CodecId, CodecParameters};
+    /// # use oxideav_core::gapless::GaplessInfo;
+    /// let p = CodecParameters::audio(CodecId::new("aac"))
+    ///     .with_gapless(GaplessInfo::new().with_priming(2112).with_padding(691));
+    /// assert_eq!(p.gapless.valid_range(8192), 2112..7501);
+    /// ```
+    pub fn with_gapless(mut self, gapless: GaplessInfo) -> Self {
+        self.gapless = gapless;
+        self
+    }
+
+    /// Builder method: set only the leading (priming) sample count of
+    /// the stream's [`gapless`](Self::gapless) record.
+    pub fn with_priming_samples(mut self, samples: u32) -> Self {
+        self.gapless.priming = Some(samples);
+        self
+    }
+
+    /// Builder method: set only the trailing (padding) sample count of
+    /// the stream's [`gapless`](Self::gapless) record.
+    pub fn with_padding_samples(mut self, samples: u32) -> Self {
+        self.gapless.padding = Some(samples);
+        self
     }
 
     /// The stream's attached metadata [`blobs`](Self::blobs), in
@@ -1430,5 +1582,132 @@ mod codec_parameters_color_signal_tests {
         let single =
             CodecParameters::video(CodecId::new("h265")).with_layers(vec![LayerInfo::new(0)]);
         assert!(!single.is_multi_layer());
+    }
+}
+
+#[cfg(test)]
+mod codec_parameters_geometry_gapless_tests {
+    use super::*;
+    use crate::frame::Frame;
+    use crate::geometry::DisplayOrientation;
+
+    fn every_constructor() -> [CodecParameters; 4] {
+        let id = CodecId::new("x");
+        [
+            CodecParameters::audio(id.clone()),
+            CodecParameters::video(id.clone()),
+            CodecParameters::subtitle(id.clone()),
+            CodecParameters::data(id),
+        ]
+    }
+
+    #[test]
+    fn geometry_and_gapless_default_to_unspecified_on_every_constructor() {
+        for p in every_constructor() {
+            assert!(p.geometry.is_unspecified());
+            assert_eq!(p.geometry, VideoGeometry::default());
+            assert!(p.gapless.is_unspecified());
+            assert_eq!(p.gapless, GaplessInfo::default());
+            assert_eq!(p.display_size(), None);
+        }
+    }
+
+    #[test]
+    fn part_builders_touch_only_their_part() {
+        let clap = CleanAperture::from_crop(1920, 1088, 0, 0, 1920, 1080);
+        let mut p = CodecParameters::video(CodecId::new("h264"))
+            .with_pixel_aspect(Rational::new(1, 1))
+            .with_clean_aperture(clap)
+            .with_field_order(FieldOrder::Progressive)
+            .with_display_matrix(DisplayOrientation::rotated_cw(2));
+        assert_eq!(p.geometry.pixel_aspect, Some(Rational::new(1, 1)));
+        assert_eq!(p.geometry.clean_aperture, Some(clap));
+        assert_eq!(p.geometry.field_order, FieldOrder::Progressive);
+        assert_eq!(
+            p.geometry.orientation(),
+            Some(DisplayOrientation::rotated_cw(2))
+        );
+        assert_eq!(p.display_size(), None); // no coded size yet
+        p.width = Some(1920);
+        p.height = Some(1088);
+        assert_eq!(p.display_size(), Some((1920, 1080)));
+        let q = p.clone().with_geometry(VideoGeometry::new());
+        assert!(q.geometry.is_unspecified());
+        assert_eq!(q.display_size(), Some((1920, 1088)));
+
+        let a = CodecParameters::audio(CodecId::new("opus"))
+            .with_priming_samples(312)
+            .with_padding_samples(7);
+        assert_eq!(a.gapless.priming, Some(312));
+        assert_eq!(a.gapless.padding, Some(7));
+        assert_eq!(a.gapless.valid_samples, None);
+        let b = a.clone().with_gapless(GaplessInfo::new());
+        assert!(b.gapless.is_unspecified());
+    }
+
+    #[test]
+    fn matches_core_ignores_geometry_and_gapless() {
+        let a = CodecParameters::video(CodecId::new("h264"));
+        let b = a
+            .clone()
+            .with_field_order(FieldOrder::TopFirst)
+            .with_priming_samples(1);
+        assert!(a.matches_core(&b));
+        assert!(b.matches_core(&a));
+    }
+
+    #[test]
+    fn merge_takes_the_decoders_specified_parts_only() {
+        // Container: rotation + aspect ratio + AAC priming / remainder.
+        let mut stream = CodecParameters::video(CodecId::new("h264"))
+            .with_pixel_aspect(Rational::new(4, 3))
+            .with_display_matrix(DisplayOrientation::rotated_cw(1))
+            .with_gapless(GaplessInfo::new().with_priming(2112).with_padding(691));
+        // Decoder: bitstream says 16:11 pixels, top field first; it
+        // trimmed the priming itself.
+        let decoded = CodecParameters::video(CodecId::new("h264"))
+            .with_pixel_aspect(Rational::new(16, 11))
+            .with_field_order(FieldOrder::TopFirst)
+            .with_priming_samples(0);
+        assert!(stream.merge_output_params(&decoded));
+        assert_eq!(stream.geometry.pixel_aspect, Some(Rational::new(16, 11)));
+        assert_eq!(stream.geometry.field_order, FieldOrder::TopFirst);
+        assert_eq!(
+            stream.geometry.orientation(),
+            Some(DisplayOrientation::rotated_cw(1))
+        );
+        assert_eq!(stream.gapless.priming, Some(0));
+        assert_eq!(stream.gapless.padding, Some(691));
+        // Idempotent, and an all-unspecified answer changes nothing.
+        assert!(!stream.merge_output_params(&decoded));
+        let before = (stream.geometry, stream.gapless);
+        assert!(!stream.merge_output_params(&CodecParameters::video(CodecId::new("h264"))));
+        assert_eq!((stream.geometry, stream.gapless), before);
+    }
+
+    /// A mid-stream change of geometry travels through the in-band
+    /// stream-parameters event like any other output-shape change.
+    #[test]
+    fn stream_params_event_carries_geometry_and_gapless() {
+        let announced = CodecParameters::video(CodecId::new("h264"))
+            .with_field_order(FieldOrder::BottomFirst)
+            .with_display_matrix(DisplayOrientation::mirrored_horizontally())
+            .with_padding_samples(12);
+        let event = Frame::StreamParams(Box::new(announced));
+        let carried = event.stream_params().expect("event carries parameters");
+        assert_eq!(carried.geometry.field_order, FieldOrder::BottomFirst);
+        assert_eq!(carried.gapless.padding, Some(12));
+
+        let mut stream =
+            CodecParameters::video(CodecId::new("h264")).with_field_order(FieldOrder::Progressive);
+        let mut watch = crate::OutputParamsWatch::default();
+        assert!(watch.observe_frame(&event, &mut stream));
+        assert_eq!(stream.geometry.field_order, FieldOrder::BottomFirst);
+        assert_eq!(
+            stream.geometry.orientation(),
+            Some(DisplayOrientation::mirrored_horizontally())
+        );
+        assert_eq!(stream.gapless.padding, Some(12));
+        assert!(!watch.observe_frame(&event, &mut stream));
     }
 }

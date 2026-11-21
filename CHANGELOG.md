@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Video stream geometry** — new module `geometry` and
+  `CodecParameters::geometry: VideoGeometry` (all parts optional,
+  default unspecified): `pixel_aspect: Option<Rational>`;
+  `clean_aperture: Option<CleanAperture>` (the four fractions of the
+  ISO/IEC 14496-12 §12.1.4 `clap` box, with `centered`, `from_crop`,
+  `is_valid`, `rect_in` → `ApertureRect` / `to_integer`);
+  `field_order: FieldOrder` (`Unspecified` / `Progressive` / `TopFirst`
+  / `BottomFirst` / `TopDisplayedBottomStored` /
+  `BottomDisplayedTopStored` / `Interlaced`, with `Field`,
+  `first_displayed`, `first_stored`, `from_fields`, and
+  `from_field_atom` / `to_field_atom` for the QuickTime `fiel` byte
+  pair); `display_matrix: Option<DisplayMatrix>` (the §6.2.2 3×3 matrix
+  in stored fixed-point form: `from_fixed` / `to_fixed`, `apply`,
+  `linear`, `translation`, `rotation_degrees_cw`, `is_affine`,
+  `orientation`) and `DisplayOrientation` (mirror + clockwise quarter
+  turns: `then`, `inverse`, `output_size`, `from_degrees_cw`,
+  `DisplayMatrix::from_orientation[_in]`). `VideoGeometry::or` merges
+  field-wise and `display_size(w, h)` resolves aperture + aspect ratio
+  + orientation.
+- **Gapless trim record** — new module `gapless` and
+  `CodecParameters::gapless: GaplessInfo` (`priming`, `padding`,
+  `valid_samples`, all optional; `valid_range`,
+  `resolved_valid_samples`, `resolved_padding`, `or`).
+- `CodecParameters` builders `with_geometry`, `with_pixel_aspect`,
+  `with_clean_aperture`, `with_field_order`, `with_display_matrix`,
+  `with_gapless`, `with_priming_samples`, `with_padding_samples`, and
+  `display_size()`. `merge_output_params` folds both records in
+  field-wise (decoder's specified parts over the container's), so they
+  travel through `OutputParamsWatch` and the `Frame::StreamParams`
+  event unchanged; `matches_core` ignores them. `CodecParameters` was
+  already `#[non_exhaustive]`.
+
 - **Height, wide, bottom and second-LFE speaker positions** on
   `ChannelPosition`: `WideLeft` / `WideRight` (Lw / Rw), `TopSideLeft` /
   `TopSideRight` (Tsl / Tsr), `TopFrontCenter`, `TopCenter`,
