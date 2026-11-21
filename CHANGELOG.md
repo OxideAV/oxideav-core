@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Conic (sweep) gradient paint** — `vector::ConicGradient` (`center`,
+  `start_angle`, `stops`, `spread`, a gradient-space → user-space
+  `transform`; `offset_at(point)` defines the angle → offset mapping)
+  and the `Paint::ConicGradient` variant. `Paint` was already
+  `#[non_exhaustive]`; consumers that do not know the variant fall
+  through their wildcard arm.
 - **Video stream geometry** — new module `geometry` and
   `CodecParameters::geometry: VideoGeometry` (all parts optional,
   default unspecified): `pixel_aspect: Option<Rational>`;

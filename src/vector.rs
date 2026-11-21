@@ -7,7 +7,7 @@
 //!
 //! * paths built from move / line / quadratic / cubic / elliptic-arc / close
 //!   commands,
-//! * solid + linear-gradient + radial-gradient paints,
+//! * solid + linear-gradient + radial-gradient + conic-gradient paints,
 //! * stroke style (width, cap, join, miter limit, dash),
 //! * even-odd / non-zero fill rules,
 //! * 2D affine transforms,
@@ -454,6 +454,8 @@ pub enum Paint {
     LinearGradient(LinearGradient),
     /// Color stops swept outward from a focal point to a circle.
     RadialGradient(RadialGradient),
+    /// Color stops swept around a centre point by angle.
+    ConicGradient(ConicGradient),
 }
 
 /// 32-bit straight (non-premultiplied) RGBA color.
@@ -608,6 +610,122 @@ impl RadialGradient {
     pub fn with_spread(mut self, spread: SpreadMethod) -> Self {
         self.spread = spread;
         self
+    }
+}
+
+/// A conic (sweep) gradient: color stops are laid out by **angle**
+/// around `center`, so the color is constant along every ray leaving
+/// the centre.
+///
+/// Stop offset `0.0` lies on the ray at `start_angle`; offsets grow
+/// with the angle in the same rotational sense as
+/// [`Transform2D::rotate`] (from the +X axis toward the +Y axis, which
+/// is clockwise on screen under the Y-down convention of this module),
+/// and offset `1.0` is one full turn later, back on the starting ray.
+/// [`offset_at`](Self::offset_at) gives the exact mapping.
+///
+/// `spread` governs angles outside the offset interval covered by the
+/// stops, exactly as it does along the axis of a linear gradient:
+/// with stops spanning `0.25..=0.5`, [`SpreadMethod::Pad`] holds the
+/// end colors over the rest of the turn while [`SpreadMethod::Repeat`]
+/// / [`SpreadMethod::Reflect`] tile that quarter-turn sector around
+/// the circle. When the stops span the whole `0.0..=1.0` turn the
+/// three are equivalent.
+///
+/// `transform` maps the gradient's own coordinate space (in which
+/// `center` and the angles are expressed) to the user space of the
+/// painted shape, so a sweep can be squashed into an ellipse or
+/// sheared — neither is expressible by moving the centre or the start
+/// angle.
+///
+/// `#[non_exhaustive]`: build it with [`new`](Self::new) and the
+/// `with_*` builders.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ConicGradient {
+    /// The point every ray leaves from, in gradient space.
+    pub center: Point,
+    /// Direction of the offset-`0.0` ray, in radians, measured from the
+    /// +X axis in the [`Transform2D::rotate`] sense.
+    pub start_angle: f32,
+    /// Color stops, ordered by ascending `offset`; `0.0..=1.0` is one
+    /// full turn.
+    pub stops: Vec<GradientStop>,
+    /// What to paint at angles outside the stops' offset interval.
+    pub spread: SpreadMethod,
+    /// Gradient space → user space. Identity by default.
+    pub transform: Transform2D,
+}
+
+impl ConicGradient {
+    /// Build a `ConicGradient` around `center` starting on the +X axis,
+    /// with no stops, [`SpreadMethod::Pad`] and an identity transform.
+    pub fn new(center: Point) -> Self {
+        Self {
+            center,
+            start_angle: 0.0,
+            stops: Vec::new(),
+            spread: SpreadMethod::Pad,
+            transform: Transform2D::identity(),
+        }
+    }
+
+    /// Set the direction of the offset-`0.0` ray, in radians.
+    pub fn with_start_angle(mut self, radians: f32) -> Self {
+        self.start_angle = radians;
+        self
+    }
+
+    /// Replace the gradient stops.
+    pub fn with_stops(mut self, stops: Vec<GradientStop>) -> Self {
+        self.stops = stops;
+        self
+    }
+
+    /// Append a single stop.
+    pub fn with_stop(mut self, stop: GradientStop) -> Self {
+        self.stops.push(stop);
+        self
+    }
+
+    /// Set the spread method.
+    pub fn with_spread(mut self, spread: SpreadMethod) -> Self {
+        self.spread = spread;
+        self
+    }
+
+    /// Set the gradient-space → user-space transform.
+    pub fn with_transform(mut self, transform: Transform2D) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// The gradient offset of the point `p`, given in **gradient
+    /// space** (i.e. before [`transform`](Self::transform)): the
+    /// fraction of a full turn between the starting ray and the ray
+    /// through `p`, in `0.0..1.0`.
+    ///
+    /// With `θ = atan2(p.y − center.y, p.x − center.x)` this is the
+    /// fractional part of `(θ − start_angle) / 2π`. The centre itself,
+    /// where the angle is undefined, reports `0.0`.
+    ///
+    /// ```
+    /// # use oxideav_core::{ConicGradient, Point};
+    /// let g = ConicGradient::new(Point::new(10.0, 10.0));
+    /// assert_eq!(g.offset_at(Point::new(20.0, 10.0)), 0.0); // +X
+    /// assert_eq!(g.offset_at(Point::new(10.0, 20.0)), 0.25); // +Y
+    /// assert_eq!(g.offset_at(Point::new(0.0, 10.0)), 0.5); // −X
+    /// ```
+    pub fn offset_at(&self, p: Point) -> f32 {
+        let dx = f64::from(p.x) - f64::from(self.center.x);
+        let dy = f64::from(p.y) - f64::from(self.center.y);
+        if dx == 0.0 && dy == 0.0 {
+            return 0.0;
+        }
+        let turns = (dy.atan2(dx) - f64::from(self.start_angle)) / std::f64::consts::TAU;
+        let t = (turns - turns.floor()) as f32;
+        // The f32 rounding of a value just below 1.0 can land on 1.0.
+        if t >= 1.0 { 0.0 } else { t }
     }
 }
 
@@ -1394,6 +1512,87 @@ mod tests {
             .with_stops(vec![GradientStop::new(1.0, Rgba::opaque(1, 1, 1))]);
         assert_eq!(g.stops.len(), 1);
         assert_eq!(g.stops[0].offset, 1.0);
+    }
+
+    #[test]
+    fn conic_gradient_new_defaults() {
+        let g = ConicGradient::new(Point::new(3.0, 4.0));
+        assert_eq!(g.center, Point::new(3.0, 4.0));
+        assert_eq!(g.start_angle, 0.0);
+        assert!(g.stops.is_empty());
+        assert_eq!(g.spread, SpreadMethod::Pad);
+        assert!(g.transform.is_identity());
+    }
+
+    #[test]
+    fn conic_gradient_builder_equality_and_paint_variant() {
+        let build = || {
+            ConicGradient::new(Point::new(0.0, 0.0))
+                .with_start_angle(1.5)
+                .with_stop(GradientStop::new(0.0, Rgba::opaque(255, 0, 0)))
+                .with_stop(GradientStop::new(1.0, Rgba::opaque(0, 0, 255)))
+                .with_spread(SpreadMethod::Repeat)
+                .with_transform(Transform2D::scale(2.0, 1.0))
+        };
+        let g = build();
+        assert_eq!(g.start_angle, 1.5);
+        assert_eq!(g.stops.len(), 2);
+        assert_eq!(g.spread, SpreadMethod::Repeat);
+        assert_eq!(g.transform, Transform2D::scale(2.0, 1.0));
+        assert_eq!(g, build());
+        assert_ne!(g, build().with_start_angle(0.0));
+        let replaced = build().with_stops(vec![GradientStop::new(0.5, Rgba::opaque(1, 2, 3))]);
+        assert_eq!(replaced.stops.len(), 1);
+        match Paint::ConicGradient(g.clone()) {
+            Paint::ConicGradient(inner) => assert_eq!(inner, g),
+            _ => panic!("expected Paint::ConicGradient"),
+        }
+    }
+
+    #[test]
+    fn conic_gradient_offset_follows_the_rotate_sense() {
+        let c = Point::new(5.0, -2.0);
+        let g = ConicGradient::new(c);
+        // A ray at angle a (as Transform2D::rotate turns the +X axis)
+        // has offset a / 2π.
+        for (k, want) in [
+            (0, 0.0),
+            (1, 0.125),
+            (2, 0.25),
+            (4, 0.5),
+            (6, 0.75),
+            (7, 0.875),
+        ] {
+            let a = k as f32 * std::f32::consts::FRAC_PI_4;
+            let d = Transform2D::rotate(a).apply(Point::new(3.0, 0.0));
+            let t = g.offset_at(Point::new(c.x + d.x, c.y + d.y));
+            assert!((t - want).abs() < 1e-6, "k={k}: {t} vs {want}");
+        }
+        // The centre is defined, and the distance from it is irrelevant.
+        assert_eq!(g.offset_at(c), 0.0);
+        assert_eq!(
+            g.offset_at(Point::new(c.x, c.y + 1.0)),
+            g.offset_at(Point::new(c.x, c.y + 1000.0))
+        );
+    }
+
+    #[test]
+    fn conic_gradient_start_angle_shifts_the_zero_ray() {
+        let g =
+            ConicGradient::new(Point::new(0.0, 0.0)).with_start_angle(std::f32::consts::FRAC_PI_2);
+        // Offset 0 now lies on +Y; +X is three quarters of a turn on.
+        assert!(g.offset_at(Point::new(0.0, 1.0)).abs() < 1e-6);
+        assert!((g.offset_at(Point::new(-1.0, 0.0)) - 0.25).abs() < 1e-6);
+        assert!((g.offset_at(Point::new(1.0, 0.0)) - 0.75).abs() < 1e-6);
+        // Always inside 0.0..1.0, whatever the start angle.
+        for i in 0..720 {
+            let a = i as f32 * 0.0175;
+            for start in [-7.0f32, -0.1, 0.0, 3.0, 100.0] {
+                let g = ConicGradient::new(Point::new(0.0, 0.0)).with_start_angle(start);
+                let t = g.offset_at(Point::new(a.cos(), a.sin()));
+                assert!((0.0..1.0).contains(&t), "{t}");
+            }
+        }
     }
 
     #[test]
