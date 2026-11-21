@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Filter effects in the vector scene** — `Node::Filter(FilterNode)`
+  applies a `FilterEffect` (filter region + units, ordered
+  `FilterPrimitive` list, the paints behind the fill / stroke inputs)
+  to a subtree. Each primitive carries a typed `FilterPrimitiveKind`
+  (`Blend`, `ColorMatrix`, `ComponentTransfer`, `Composite`,
+  `ConvolveMatrix`, `DiffuseLighting`, `DisplacementMap`, `DropShadow`,
+  `Flood`, `GaussianBlur`, `Image`, `Merge`, `Morphology`, `Offset`,
+  `SpecularLighting`, `Tile`, `Turbulence`), its `FilterInput`s
+  (`Previous`, the six standard inputs, `Result(index)`), a
+  `FilterSubregion` and a `ColorInterpolation` space. Supporting types
+  `BlendMode`, `ColorMatrixKind`, `TransferFunction` (with `apply`),
+  `CompositeOperator`, `EdgeMode`, `ColorChannel`,
+  `MorphologyOperator`, `TurbulenceKind`, `LightSource`, `FilterUnits`.
+  `FilterEffect::validate` checks arity / reference order / kernel
+  shape; `resolve_input`, `reads` and `region_in` serve rasterisers.
+  Model and defaults follow the W3C Filter Effects Module Level 1.
+- **Shapes with stroke extras** — `Node::Shape(ShapeNode)` wraps a
+  `PathNode` and adds `non_scaling_stroke`, vertex `Markers` (`start` /
+  `mid` / `end`, each an `Arc<Marker>` with content, view box,
+  reference point, viewport size, `MarkerUnits`, `MarkerOrient`, clip
+  flag, and `Marker::placement` composing the SVG 2 §13.7.4 transform
+  chain) and a `PaintOrder` of `PaintLayer`s. `ShapeNode::into_node`
+  degrades to `Node::Path` when nothing extra is set. These live on a
+  new node rather than on `Stroke` / `PathNode` because sibling crates
+  build both with struct literals.
+- `vector::PreserveAspectRatio` / `AspectAlign` with
+  `viewport_transform` (SVG 2 §8.2), shared by markers and the image
+  filter primitive.
 - **Conic (sweep) gradient paint** — `vector::ConicGradient` (`center`,
   `start_angle`, `stops`, `spread`, a gradient-space → user-space
   `transform`; `offset_at(point)` defines the angle → offset mapping)

@@ -102,7 +102,9 @@ pub use stream::{
 pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
 pub use time::{Rounding, TimeBase, Timestamp, rescale, rescale_checked, rescale_rnd};
 pub use vector::{
-    ConicGradient, DashPattern, FillRule, GradientStop, Group, ImageRef, LineCap, LineJoin,
-    LinearGradient, MaskKind, Node, Paint, Path, PathCommand, PathNode, Point, RadialGradient,
-    Rect, Rgba, SpreadMethod, Stroke, Transform2D, VectorFrame, ViewBox,
+    AspectAlign, ConicGradient, DashPattern, FillRule, FilterEffect, FilterNode, FilterPrimitive,
+    FilterPrimitiveKind, GradientStop, Group, ImageRef, LineCap, LineJoin, LinearGradient, Marker,
+    Markers, MaskKind, Node, Paint, PaintOrder, Path, PathCommand, PathNode, Point,
+    PreserveAspectRatio, RadialGradient, Rect, Rgba, ShapeNode, SpreadMethod, Stroke, Transform2D,
+    VectorFrame, ViewBox,
 };

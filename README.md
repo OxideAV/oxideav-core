@@ -297,6 +297,42 @@ downstream stages nothing is left to trim.
 clamped index range. Builders: `with_gapless`, `with_priming_samples`,
 `with_padding_samples`.
 
+## Vector scene
+
+Module `vector` is the resolution-independent scene every vector
+producer (SVG, PDF, text shaping) and consumer (rasteriser, writers)
+agrees on: a `VectorFrame` holding a tree of `Node`s. `Node` and
+`Paint` are `#[non_exhaustive]`; a consumer handles what it knows and
+skips the rest through its wildcard arm.
+
+| node | carries |
+|---|---|
+| `Path(PathNode)` | geometry, fill `Paint`, `Stroke`, fill rule |
+| `Shape(ShapeNode)` | a `PathNode` plus `non_scaling_stroke`, vertex `Markers` and a `PaintOrder`; rendering `.path` alone is the fallback |
+| `Group(Group)` | transform, opacity, clip, children, cache key |
+| `Image(ImageRef)` | an embedded raster frame |
+| `SoftMask { .. }` | luminance / alpha mask over a subtree |
+| `Filter(FilterNode)` | a subtree rendered through a `FilterEffect` |
+
+* **Paints** — `Solid`, `LinearGradient`, `RadialGradient`,
+  `ConicGradient` (stops laid out by angle around a centre;
+  `ConicGradient::offset_at` fixes the angle → offset mapping so
+  producers and rasterisers agree).
+* **Filter effects** — a `FilterEffect` is a filter region plus an
+  ordered list of `FilterPrimitive`s, each with a typed
+  `FilterPrimitiveKind` (the seventeen primitives of the W3C Filter
+  Effects Module Level 1, from `GaussianBlur` to `Turbulence`), its
+  `FilterInput`s (`SourceGraphic`, `SourceAlpha`, backdrop, fill /
+  stroke paint, `Previous`, or `Result(index)` of an earlier
+  primitive), a subregion and a colour-interpolation space.
+  `FilterEffect::validate()` rejects malformed graphs;
+  `resolve_input` / `reads` / `region_in` are the rasteriser-side
+  helpers. Effects are shared behind `Arc`.
+* **Markers** — a `Marker` is a drawing with a view box, a reference
+  point, a viewport in stroke-width or user units and an orientation
+  rule; `Marker::placement(position, vertex, direction, stroke_width)`
+  returns the content → user-space transform for one instance.
+
 ## Container metadata
 
 Text metadata — the ordered `(key, value)` pairs a demuxer reports from

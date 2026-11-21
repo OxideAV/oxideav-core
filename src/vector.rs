@@ -12,6 +12,10 @@
 //! * even-odd / non-zero fill rules,
 //! * 2D affine transforms,
 //! * group nodes (transform, opacity, optional clip),
+//! * filter-effect nodes ([`FilterNode`]: a typed filter primitive graph
+//!   applied to a subtree),
+//! * shape nodes ([`ShapeNode`]: a path plus a non-scaling-stroke flag,
+//!   vertex [`Markers`] and a [`PaintOrder`]),
 //! * embedded raster passthrough via [`ImageRef`] (carries a child
 //!   [`VideoFrame`](crate::VideoFrame) — the rasterizer paints the image
 //!   into vector space).
@@ -25,6 +29,18 @@
 //! data types every consumer of the vector pipeline needs to agree on.
 
 use crate::time::TimeBase;
+
+mod effects;
+mod shape;
+
+pub use effects::{
+    BlendMode, ColorChannel, ColorInterpolation, ColorMatrixKind, CompositeOperator, EdgeMode,
+    FilterEffect, FilterInput, FilterNode, FilterPrimitive, FilterPrimitiveKind, FilterSubregion,
+    FilterUnits, LightSource, MorphologyOperator, TransferFunction, TurbulenceKind,
+};
+pub use shape::{
+    Marker, MarkerOrient, MarkerPosition, MarkerUnits, Markers, PaintLayer, PaintOrder, ShapeNode,
+};
 
 /// A decoded vector-graphics frame.
 ///
@@ -125,6 +141,104 @@ impl ViewBox {
     }
 }
 
+/// Which point of a view box is pinned to the matching point of the
+/// viewport when the two have different aspect ratios — the `<align>`
+/// part of a `preserveAspectRatio` value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // Variants are the nine X × Y alignments.
+pub enum AspectAlign {
+    /// Do not preserve the aspect ratio: scale each axis independently
+    /// so the view box exactly fills the viewport.
+    None,
+    XMinYMin,
+    XMidYMin,
+    XMaxYMin,
+    XMinYMid,
+    #[default]
+    XMidYMid,
+    XMaxYMid,
+    XMinYMax,
+    XMidYMax,
+    XMaxYMax,
+}
+
+/// How a view box is fitted into a viewport of a different aspect
+/// ratio: an alignment and a meet-or-slice choice. `Default` is
+/// `xMidYMid meet`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PreserveAspectRatio {
+    /// Alignment of the view box within the viewport.
+    pub align: AspectAlign,
+    /// `false` (*meet*): scale uniformly so the whole view box is
+    /// visible. `true` (*slice*): scale uniformly so the view box
+    /// covers the whole viewport, overflowing on one axis.
+    pub slice: bool,
+}
+
+impl PreserveAspectRatio {
+    /// Build a fit from its alignment and meet-or-slice choice.
+    pub const fn new(align: AspectAlign, slice: bool) -> Self {
+        Self { align, slice }
+    }
+
+    /// Stretch to fill: no aspect-ratio preservation.
+    pub const fn none() -> Self {
+        Self {
+            align: AspectAlign::None,
+            slice: false,
+        }
+    }
+
+    /// The transform that maps `view_box` coordinates into `viewport`:
+    /// a scale followed by a translation, computed as SVG 2 §8.2
+    /// ("Computing the equivalent transform of an SVG viewport")
+    /// prescribes.
+    ///
+    /// ```
+    /// # use oxideav_core::vector::PreserveAspectRatio;
+    /// # use oxideav_core::{Point, Rect, ViewBox};
+    /// // A 100×50 box centred in a 300×300 viewport: scale 3, 75 down.
+    /// let t = PreserveAspectRatio::default().viewport_transform(
+    ///     ViewBox::new(0.0, 0.0, 100.0, 50.0),
+    ///     Rect::new(0.0, 0.0, 300.0, 300.0),
+    /// );
+    /// assert_eq!(t.apply(Point::new(0.0, 0.0)), Point::new(0.0, 75.0));
+    /// assert_eq!(t.apply(Point::new(100.0, 50.0)), Point::new(300.0, 225.0));
+    /// ```
+    pub fn viewport_transform(&self, view_box: ViewBox, viewport: Rect) -> Transform2D {
+        use AspectAlign::*;
+        let mut sx = viewport.width / view_box.width;
+        let mut sy = viewport.height / view_box.height;
+        if self.align != None {
+            let s = if self.slice { sx.max(sy) } else { sx.min(sy) };
+            sx = s;
+            sy = s;
+        }
+        let mut tx = viewport.x - view_box.min_x * sx;
+        let mut ty = viewport.y - view_box.min_y * sy;
+        let slack_x = viewport.width - view_box.width * sx;
+        let slack_y = viewport.height - view_box.height * sy;
+        match self.align {
+            XMidYMin | XMidYMid | XMidYMax => tx += slack_x / 2.0,
+            XMaxYMin | XMaxYMid | XMaxYMax => tx += slack_x,
+            _ => {}
+        }
+        match self.align {
+            XMinYMid | XMidYMid | XMaxYMid => ty += slack_y / 2.0,
+            XMinYMax | XMidYMax | XMaxYMax => ty += slack_y,
+            _ => {}
+        }
+        Transform2D {
+            a: sx,
+            b: 0.0,
+            c: 0.0,
+            d: sy,
+            e: tx,
+            f: ty,
+        }
+    }
+}
+
 /// One node in the scene tree.
 ///
 /// Marked `#[non_exhaustive]` so future variants (text, filters) can
@@ -152,6 +266,16 @@ pub enum Node {
         /// Subtree whose pixels are modulated by the mask.
         content: Box<Node>,
     },
+    /// A subtree rendered through a filter effect (blur, colour matrix,
+    /// lighting, …): the content is rasterised, the effect's primitive
+    /// graph is evaluated on it, and the result is painted in its
+    /// place. See [`FilterNode`] and [`FilterEffect`].
+    Filter(FilterNode),
+    /// A path shape with stroke-related extras: a non-scaling stroke,
+    /// vertex markers, a paint order. Rendering its
+    /// [`path`](ShapeNode::path) alone, as a [`Node::Path`], is the
+    /// correct fallback for a consumer that implements none of them.
+    Shape(ShapeNode),
 }
 
 /// How to interpret a soft mask's rasterised pixels as a coverage
@@ -1592,6 +1716,44 @@ mod tests {
                 let t = g.offset_at(Point::new(a.cos(), a.sin()));
                 assert!((0.0..1.0).contains(&t), "{t}");
             }
+        }
+    }
+
+    #[test]
+    fn preserve_aspect_ratio_default_and_none() {
+        let d = PreserveAspectRatio::default();
+        assert_eq!(d.align, AspectAlign::XMidYMid);
+        assert!(!d.slice);
+        assert_eq!(d, PreserveAspectRatio::new(AspectAlign::XMidYMid, false));
+        assert_eq!(PreserveAspectRatio::none().align, AspectAlign::None);
+        // none: independent scales, exact fill.
+        let t = PreserveAspectRatio::none().viewport_transform(
+            ViewBox::new(10.0, 20.0, 100.0, 50.0),
+            Rect::new(5.0, 5.0, 200.0, 200.0),
+        );
+        assert_eq!(t.apply(Point::new(10.0, 20.0)), Point::new(5.0, 5.0));
+        assert_eq!(t.apply(Point::new(110.0, 70.0)), Point::new(205.0, 205.0));
+    }
+
+    #[test]
+    fn preserve_aspect_ratio_alignments_meet_and_slice() {
+        use AspectAlign::*;
+        let vb = ViewBox::new(0.0, 0.0, 100.0, 50.0);
+        let vp = Rect::new(0.0, 0.0, 300.0, 300.0);
+        // meet: scale 3, 150 of vertical slack.
+        for (align, ty) in [(XMinYMin, 0.0), (XMinYMid, 75.0), (XMinYMax, 150.0)] {
+            let t = PreserveAspectRatio::new(align, false).viewport_transform(vb, vp);
+            assert_eq!((t.a, t.d, t.e, t.f), (3.0, 3.0, 0.0, ty), "{align:?}");
+        }
+        // slice: scale 6, the box is 600 wide: -300 of horizontal slack.
+        for (align, tx) in [(XMinYMid, 0.0), (XMidYMid, -150.0), (XMaxYMid, -300.0)] {
+            let t = PreserveAspectRatio::new(align, true).viewport_transform(vb, vp);
+            assert_eq!((t.a, t.d, t.e, t.f), (6.0, 6.0, tx, 0.0), "{align:?}");
+        }
+        // The X part of the alignment is inert when only Y has slack.
+        for align in [XMaxYMin, XMidYMin, XMidYMax, XMaxYMax] {
+            let t = PreserveAspectRatio::new(align, false).viewport_transform(vb, vp);
+            assert_eq!(t.e, 0.0);
         }
     }
 
