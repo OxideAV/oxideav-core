@@ -319,8 +319,9 @@ pub enum CompositeOperator {
     Xor,
     /// The sum of both.
     Lighter,
-    /// Per component, on premultiplied values:
-    /// `result = k1·i1·i2 + k2·i1 + k3·i2 + k4`.
+    /// Per channel, with `i1` / `i2` the channel values of input 0 /
+    /// input 1: `result = k1·i1·i2 + k2·i1 + k3·i2 + k4`, clamped to
+    /// `[0, 1]`.
     Arithmetic {
         /// Weight of the product of both inputs.
         k1: f32,
